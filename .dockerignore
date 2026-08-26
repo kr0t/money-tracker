@@ -1,0 +1,9 @@
+data/
+__pycache__/
+*.pyc
+.git/
+.cursor/
+.DS_Store
+*.md
+deploy/
+.github/
