@@ -86,6 +86,10 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_file(STATIC_DIR / "index.html")
             return
 
+        if path in ("/style.css", "/app.js"):
+            self._serve_file(STATIC_DIR / path.lstrip("/"))
+            return
+
         if path.startswith("/static/"):
             rel = path[len("/static/") :]
             if ".." in rel or rel.startswith("/"):

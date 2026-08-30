@@ -1,0 +1,15 @@
+{
+  "name": "money-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev public --d1=DB=money-tracker-db --port 8788",
+    "db:init:local": "wrangler d1 execute money-tracker-db --local --file=./schema.sql",
+    "db:init:remote": "wrangler d1 execute money-tracker-db --remote --file=./schema.sql",
+    "deploy": "wrangler pages deploy public"
+  },
+  "devDependencies": {
+    "wrangler": "^4.127.1"
+  }
+}

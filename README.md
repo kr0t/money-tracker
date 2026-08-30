@@ -1,114 +1,114 @@
-# Доступные деньги
+# Доступные деньги (Money Tracker)
 
-Локальный трекер остатка после зарплат и трат. Только стандартная библиотека Python 3.14.
+Трекер доступных денег и долгов. Работает на **Cloudflare Pages + Pages Functions + Cloudflare D1 (serverless SQLite)**, а также поддерживает локальный запуск.
 
-## Локальный запуск
+## Архитектура
+
+```mermaid
+flowchart LR
+  Browser[SPA Frontend] -->|GET / /style.css /app.js| Pages[Cloudflare Pages CDN]
+  Browser -->|API: /api/*| Functions[Cloudflare Pages Functions]
+  Functions --> D1[(Cloudflare D1 SQLite)]
+```
+
+- **Frontend:** чистый HTML, CSS и Vanilla JS без тяжелых фреймворков.
+- **Backend:** Cloudflare Pages Functions (`/functions/api/...`).
+- **База данных:** Cloudflare D1 (serverless SQLite с автоматической инициализацией схемы).
+
+---
+
+## Локальная разработка
+
+### Вариант 1: Через Wrangler (Cloudflare эмуляция)
+
+Требуется Node.js (v18+):
+
+```bash
+# Установка зависимостей
+npm install
+
+# Запуск локального dev-сервера с локальной D1 базой данных
+npm run dev
+```
+
+Приложение откроется на [http://127.0.0.1:8788](http://127.0.0.1:8788).
+
+### Вариант 2: Через Python (резервный локальный запуск)
 
 ```bash
 python3.14 app.py
 ```
 
-Откройте в браузере: [http://127.0.0.1:8080](http://127.0.0.1:8080)
+Приложение откроется на [http://127.0.0.1:8080](http://127.0.0.1:8080). Данные сохраняются в `data/ledger.db`.
 
-Данные хранятся в `data/ledger.db` (файл создаётся при первом запуске).
+---
 
-## Docker
+## Деплой на Cloudflare Pages
 
-```bash
-docker compose up --build
-```
+### Шаг 1. Создать базу данных Cloudflare D1
 
-Приложение будет доступно на [http://127.0.0.1:8080](http://127.0.0.1:8080). База SQLite сохраняется в Docker volume `money_data`.
-
-Переменные окружения:
-
-| Переменная | По умолчанию | Описание |
-|------------|--------------|----------|
-| `HOST` | `127.0.0.1` | Адрес прослушивания |
-| `PORT` | `8080` | Порт |
-| `DATA_DIR` | `./data` | Каталог для SQLite |
-
-## Деплой (Docker + GitHub Actions)
-
-Любой VPS или сервер с Docker, публичным IP и доступом по SSH. На сервер попадает только Docker-образ из GHCR — исходники не копируются.
-
-```mermaid
-flowchart LR
-  GitHub[GitHub push main] --> Actions[GitHub Actions]
-  Actions --> GHCR[ghcr.io image]
-  GHCR --> Server[Server with Docker]
-  User[Browser] --> Caddy[Caddy HTTPS]
-  Caddy --> App[Container]
-```
-
-### 1. Подготовка сервера (один раз)
-
-Требования: Linux (Ubuntu 22.04/24.04 или аналог), Docker + Compose plugin, открытые порты 80 и 443.
+Через терминал с помощью Wrangler:
 
 ```bash
-docker volume create money_data
-sudo mkdir -p /opt/money-tracker
+npx wrangler d1 create money-tracker-db
 ```
 
-Скопируйте на сервер файлы из `deploy/`:
+Команда выведет `database_id`. Скопируйте его и укажите в файле `wrangler.toml`:
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "money-tracker-db"
+database_id = "ВАШ_DATABASE_ID_ИЗ_КОМАНДЫ"
+```
+
+*(Опционально)* Инициализировать схему вручную в удаленной базе:
 
 ```bash
-scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/.env.example user@SERVER:/opt/money-tracker/
-ssh user@SERVER
-cd /opt/money-tracker
-cp .env.example .env
+npm run db:init:remote
 ```
+*(При первом запуске функции также автоматически создадут таблицы, если их нет).*
 
-Заполните `.env`:
+---
 
-```env
-APP_IMAGE=ghcr.io/OWNER/REPO:latest
-CADDY_DOMAIN=money.example.ru
-BASIC_AUTH_HASH=<bcrypt-хеш>
-```
+### Шаг 2. Выбор способа деплоя
 
-Сгенерируйте хеш пароля для basic auth:
+#### Способ А: Прямая интеграция с GitHub (Рекомендуемый, самый простой)
 
-```bash
-docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password'
-```
+1. Откройте панель **Cloudflare Dashboard** -> **Workers & Pages** -> **Create application** -> вкладка **Pages** -> **Connect to Git**.
+2. Выберите репозиторий `kr0t/money-tracker`.
+3. Настройки сборки:
+   - **Framework preset:** `None`
+   - **Build command:** *(оставить пустым)*
+   - **Build output directory:** `public`
+4. Нажмите **Save and Deploy**.
+5. **Привязка D1 к Pages:**
+   - В созданном проекте Pages перейдите в **Settings** -> **Functions** -> раздел **D1 database bindings**.
+   - Нажмите **Add binding**:
+     - Variable name: `DB`
+     - D1 database: `money-tracker-db`
+   - Нажмите **Save**.
+6. Переразверните проект (вкладка **Deployments** -> **Retry deployment**).
 
-Настройте DNS: A-запись `CADDY_DOMAIN` → IP сервера.
+---
 
-Сделайте GHCR package публичным (Settings → Packages) или выполните `docker login ghcr.io` на сервере, чтобы `docker pull` работал.
+#### Способ Б: Деплой через GitHub Actions
 
-Первый запуск вручную (после появления образа в GHCR):
+Если вы хотите использовать workflow `.github/workflows/deploy.yml`:
 
-```bash
-cd /opt/money-tracker
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-```
+1. В Cloudflare Dashboard создайте API токен (User Profile -> **API Tokens** -> **Create Token** -> шаблон **Edit Cloudflare Workers** или права на Pages).
+2. В репозитории GitHub перейдите в **Settings** -> **Secrets and variables** -> **Actions** и добавьте:
+   - `CLOUDFLARE_API_TOKEN` — ваш API токен Cloudflare.
+   - `CLOUDFLARE_ACCOUNT_ID` — ID аккаунта Cloudflare (виден в адресной строке или на главной странице дашборда).
+3. При каждом `git push` в ветку `main` деплой выполнится автоматически.
 
-### 2. Secrets в GitHub
-
-Settings → Secrets and variables → Actions:
-
-| Secret | Описание |
-|--------|----------|
-| `DEPLOY_HOST` | IP или hostname сервера |
-| `DEPLOY_USER` | SSH-пользователь |
-| `DEPLOY_SSH_KEY` | Приватный SSH-ключ |
-
-### 3. CI/CD
-
-При push в `main` workflow `.github/workflows/deploy.yml`:
-
-1. **test** — сборка образа и healthcheck `GET /api/summary`
-2. **build-and-push** — push в `ghcr.io/<owner>/<repo>:latest`
-3. **deploy** — SSH на сервер: `docker compose pull && up -d`
+---
 
 ## Возможности
 
-- Текущий доступный баланс
-- Несколько отдельных долгов («Добавить долг»)
-- Поступления и траты
-- Возврат долга с автосписанием из «Доступно»
-- История операций и очистка
-
-Страница адаптирована под ноутбук и мобильный экран.
+- Отображение текущего доступного баланса
+- Ведение нескольких отдельных долгов («Добавить долг»)
+- Внесение поступлений и расходов
+- Возврат долга со списанием из «Доступно» в одно действие
+- История операций и очистка истории
+- Адаптивный интерфейс (смартфон / десктоп)
