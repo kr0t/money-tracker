@@ -73,6 +73,23 @@ body {
   font-size: 0.95rem;
 }
 
+.next-income-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.85rem;
+  padding: 0.35rem 0.85rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  font-size: 0.88rem;
+  color: #f5f1e8;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
 .panel,
 .history,
 .debts-section,

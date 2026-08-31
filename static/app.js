@@ -22,6 +22,7 @@
   const addDebtSubmitBtn = document.getElementById("add-debt-submit-btn");
   const cancelAddDebtBtn = document.getElementById("cancel-add-debt-btn");
   const clearTxBtn = document.getElementById("clear-tx-btn");
+  const nextIncomeEl = document.getElementById("next-income");
 
   let kind = "income";
   const debtKinds = new Map();
@@ -520,7 +521,54 @@
       });
   });
 
+  function updateNextIncomeCountdown() {
+    if (!nextIncomeEl) {
+      return;
+    }
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const date = now.getDate();
+
+    const todayMidnight = new Date(year, month, date);
+    let target;
+
+    if (date <= 5) {
+      target = new Date(year, month, 5);
+    } else if (date <= 20) {
+      target = new Date(year, month, 20);
+    } else {
+      target = new Date(year, month + 1, 5);
+    }
+
+    const diffMs = target.getTime() - todayMidnight.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      nextIncomeEl.textContent = `Поступление сегодня (${target.getDate()}-е число)!`;
+    } else {
+      const abs = Math.abs(diffDays) % 100;
+      const rem = abs % 10;
+      let word = "дней";
+      let verb = "осталось";
+
+      if (abs > 10 && abs < 20) {
+        word = "дней";
+        verb = "осталось";
+      } else if (rem > 1 && rem < 5) {
+        word = "дня";
+        verb = "осталось";
+      } else if (rem === 1) {
+        word = "день";
+        verb = "остался";
+      }
+
+      nextIncomeEl.textContent = `До следующего поступления ${verb} ${diffDays} ${word}`;
+    }
+  }
+
   setKind("income");
+  updateNextIncomeCountdown();
   loadSummary().catch((err) => {
     setError(errorEl, err.message || "Ошибка загрузки");
     balanceEl.textContent = "—";
