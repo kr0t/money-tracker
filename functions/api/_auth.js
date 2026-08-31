@@ -36,11 +36,13 @@ async function getHmacKey(secret) {
 }
 
 function getSecret(env) {
-  return env.AUTH_SECRET || env.AUTH_PIN || "money-tracker-default-secret";
+  const secret = (env && (env.AUTH_SECRET || env.AUTH_PIN)) || "money-tracker-default-secret";
+  return String(secret);
 }
 
 export function getExpectedPin(env) {
-  return env.AUTH_PIN || DEFAULT_PIN;
+  const pin = env && env.AUTH_PIN !== undefined && env.AUTH_PIN !== null ? env.AUTH_PIN : DEFAULT_PIN;
+  return String(pin).trim();
 }
 
 export async function createAuthToken(env) {
