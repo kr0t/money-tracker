@@ -71,9 +71,7 @@ npm run db:init:remote
 
 ---
 
-### Шаг 2. Выбор способа деплоя
-
-#### Способ А: Прямая интеграция с GitHub (Рекомендуемый, самый простой)
+### Шаг 2. Деплой через интеграцию Cloudflare с GitHub
 
 1. Откройте панель **Cloudflare Dashboard** -> **Workers & Pages** -> **Create application** -> вкладка **Pages** -> **Connect to Git**.
 2. Выберите репозиторий `kr0t/money-tracker`.
@@ -89,18 +87,6 @@ npm run db:init:remote
      - D1 database: `money-tracker-db`
    - Нажмите **Save**.
 6. Переразверните проект (вкладка **Deployments** -> **Retry deployment**).
-
----
-
-#### Способ Б: Деплой через GitHub Actions
-
-Если вы хотите использовать workflow `.github/workflows/deploy.yml`:
-
-1. В Cloudflare Dashboard создайте API токен (User Profile -> **API Tokens** -> **Create Token** -> шаблон **Edit Cloudflare Workers** или права на Pages).
-2. В репозитории GitHub перейдите в **Settings** -> **Secrets and variables** -> **Actions** и добавьте:
-   - `CLOUDFLARE_API_TOKEN` — ваш API токен Cloudflare.
-   - `CLOUDFLARE_ACCOUNT_ID` — ID аккаунта Cloudflare (виден в адресной строке или на главной странице дашборда).
-3. При каждом `git push` в ветку `main` деплой выполнится автоматически.
 
 ---
 
