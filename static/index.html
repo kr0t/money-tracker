@@ -8,9 +8,35 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div class="app">
+    <div class="auth-screen" id="auth-screen" hidden>
+      <div class="auth-card">
+        <h1 class="auth-title">Доступные деньги</h1>
+        <p class="auth-subtitle">Введите PIN-код для входа</p>
+        <form id="auth-form" class="form" novalidate>
+          <label class="field">
+            <span>PIN-код или пароль</span>
+            <input
+              id="auth-pin"
+              name="pin"
+              type="password"
+              inputmode="numeric"
+              autocomplete="current-password"
+              placeholder="••••"
+              required
+            />
+          </label>
+          <p class="error" id="auth-error" hidden></p>
+          <button type="submit" class="submit" id="auth-submit-btn">Войти</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="app" id="app-main">
       <header class="hero">
-        <p class="brand">Доступно</p>
+        <div class="hero-top">
+          <p class="brand">Доступно</p>
+          <button type="button" class="logout-btn" id="logout-btn" title="Выйти" aria-label="Выйти">Выйти</button>
+        </div>
         <p class="balance" id="balance" aria-live="polite">—</p>
         <p class="hint">после зарплат и трат</p>
         <div class="next-income-badge" id="next-income" aria-live="polite"></div>

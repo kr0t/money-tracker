@@ -1,4 +1,12 @@
 (() => {
+  const authScreen = document.getElementById("auth-screen");
+  const appMain = document.getElementById("app-main");
+  const authForm = document.getElementById("auth-form");
+  const authPinInput = document.getElementById("auth-pin");
+  const authErrorEl = document.getElementById("auth-error");
+  const authSubmitBtn = document.getElementById("auth-submit-btn");
+  const logoutBtn = document.getElementById("logout-btn");
+
   const balanceEl = document.getElementById("balance");
   const debtTotalEl = document.getElementById("debt-total");
   const debtsContainer = document.getElementById("debts-container");
@@ -304,12 +312,37 @@
     }
   }
 
-  async function loadSummary() {
-    const res = await fetch("/api/summary");
-    if (!res.ok) {
-      throw new Error("Не удалось загрузить баланс");
+  function setAuthenticated(isAuth) {
+    if (isAuth) {
+      if (authScreen) authScreen.hidden = true;
+      if (appMain) appMain.hidden = false;
+    } else {
+      if (authScreen) authScreen.hidden = false;
+      if (appMain) appMain.hidden = true;
+      if (authPinInput) {
+        authPinInput.value = "";
+        setTimeout(() => authPinInput.focus(), 50);
+      }
+      setError(authErrorEl, "");
     }
+  }
+
+  async function apiFetch(url, options = {}) {
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+      setAuthenticated(false);
+      throw new Error("Требуется авторизация");
+    }
+    return res;
+  }
+
+  async function loadSummary() {
+    const res = await apiFetch("/api/summary");
     const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Не удалось загрузить баланс");
+    }
+    setAuthenticated(true);
     renderSummary(data);
   }
 
@@ -331,7 +364,7 @@
 
     btn.disabled = true;
     try {
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -413,7 +446,7 @@
       if (amountRaw) {
         body.amount = amountRaw;
       }
-      const res = await fetch("/api/debts", {
+      const res = await apiFetch("/api/debts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -455,7 +488,7 @@
 
       clearBtn.disabled = true;
       setError(item.querySelector(".debt-error"), "");
-      fetch("/api/debt/clear", {
+      apiFetch("/api/debt/clear", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ debt_id: debtId }),
@@ -507,7 +540,7 @@
     }
     clearTxBtn.disabled = true;
     setError(errorEl, "");
-    fetch("/api/transactions/clear", { method: "POST" })
+    apiFetch("/api/transactions/clear", { method: "POST" })
       .then((res) => res.json().then((data) => ({ res, data })))
       .then(({ res, data }) => {
         if (!res.ok) {
@@ -567,10 +600,59 @@
     }
   }
 
+  if (authForm) {
+    authForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setError(authErrorEl, "");
+      const pin = authPinInput.value.trim();
+      if (!pin) {
+        setError(authErrorEl, "Введите PIN-код или пароль");
+        authPinInput.focus();
+        return;
+      }
+
+      authSubmitBtn.disabled = true;
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Неверный PIN-код или пароль");
+        }
+        setAuthenticated(true);
+        await loadSummary();
+      } catch (err) {
+        setError(authErrorEl, err.message || "Ошибка авторизации");
+        authPinInput.focus();
+      } finally {
+        authSubmitBtn.disabled = false;
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      logoutBtn.disabled = true;
+      try {
+        await fetch("/api/auth/logout", { method: "POST" });
+      } catch {
+        // ignore network error
+      } finally {
+        logoutBtn.disabled = false;
+        setAuthenticated(false);
+      }
+    });
+  }
+
   setKind("income");
   updateNextIncomeCountdown();
   loadSummary().catch((err) => {
-    setError(errorEl, err.message || "Ошибка загрузки");
+    if (err.message !== "Требуется авторизация") {
+      setError(errorEl, err.message || "Ошибка загрузки");
+    }
     balanceEl.textContent = "—";
     debtTotalEl.textContent = "—";
   });

@@ -1,0 +1,5 @@
+# Секреты и переменные для локальной разработки (Wrangler Pages Dev)
+# Скопируйте этот файл в .dev.vars и задайте свои значения
+
+AUTH_PIN="1234"
+AUTH_SECRET="your-random-secret-key-for-jwt-tokens"
