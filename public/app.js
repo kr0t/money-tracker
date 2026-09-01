@@ -4,6 +4,7 @@
   const authForm = document.getElementById("auth-form");
   const authPinInput = document.getElementById("auth-pin");
   const authErrorEl = document.getElementById("auth-error");
+  const authSubtitleEl = document.getElementById("auth-subtitle");
   const authSubmitBtn = document.getElementById("auth-submit-btn");
   const logoutBtn = document.getElementById("logout-btn");
 
@@ -132,6 +133,9 @@
   }
 
   function setError(el, message) {
+    if (!el) {
+      return;
+    }
     if (!message) {
       el.hidden = true;
       el.textContent = "";
@@ -139,6 +143,20 @@
     }
     el.hidden = false;
     el.textContent = message;
+  }
+
+  function setAuthError(message) {
+    setError(authErrorEl, message);
+    if (!authSubtitleEl) {
+      return;
+    }
+    if (message) {
+      authSubtitleEl.textContent = message;
+      authSubtitleEl.classList.add("is-error");
+    } else {
+      authSubtitleEl.textContent = "Введите PIN-код для входа";
+      authSubtitleEl.classList.remove("is-error");
+    }
   }
 
   function setKind(next) {
@@ -318,7 +336,7 @@
       if (authScreen) authScreen.hidden = true;
       if (appMain) appMain.hidden = false;
       if (clearAuthError) {
-        setError(authErrorEl, "");
+        setAuthError("");
       }
     } else {
       if (authScreen) authScreen.hidden = false;
@@ -327,7 +345,7 @@
         authPinInput.value = "";
       }
       if (clearAuthError) {
-        setError(authErrorEl, "");
+        setAuthError("");
       }
       if (authPinInput) {
         setTimeout(() => authPinInput.focus(), 50);
@@ -617,54 +635,77 @@
     }
   }
 
-  if (authForm) {
-    authForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      setError(authErrorEl, "");
-      const pin = authPinInput.value.trim();
-      if (!pin) {
-        setError(authErrorEl, "Введите PIN-код или пароль");
-        authPinInput.focus();
-        return;
+  async function submitLogin() {
+    setAuthError("");
+    const pin = authPinInput?.value.trim() || "";
+    if (!pin) {
+      setAuthError("Введите PIN-код или пароль");
+      authPinInput?.focus();
+      return;
+    }
+
+    if (!authSubmitBtn) {
+      return;
+    }
+
+    authSubmitBtn.disabled = true;
+    const submitLabel = authSubmitBtn.textContent;
+    authSubmitBtn.textContent = "Вход...";
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error("Сервер вернул некорректный ответ. Проверьте, что деплой завершился.");
+      }
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error(data.error || "Неверный PIN-код или пароль");
+        }
+        throw new Error(data.error || "Не удалось войти. Проверьте настройки AUTH_PIN в Cloudflare.");
       }
 
-      authSubmitBtn.disabled = true;
-      const submitLabel = authSubmitBtn.textContent;
-      authSubmitBtn.textContent = "Вход...";
-      try {
-        const res = await fetch("/api/auth/login", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin }),
-        });
-        let data = {};
-        try {
-          data = await res.json();
-        } catch {
-          throw new Error("Сервер вернул некорректный ответ. Проверьте, что деплой завершился.");
-        }
-        if (!res.ok) {
-          if (res.status === 401) {
-            throw new Error(data.error || "Неверный PIN-код или пароль");
-          }
-          throw new Error(data.error || "Не удалось войти. Проверьте настройки AUTH_PIN в Cloudflare.");
-        }
+      const hasSession = await verifySession();
+      if (!hasSession) {
+        throw new Error(
+          "PIN принят, но сессия не сохранилась. Очистите cookies для этого сайта и попробуйте снова."
+        );
+      }
 
-        const hasSession = await verifySession();
-        if (!hasSession) {
-          throw new Error(
-            "PIN принят, но сессия не сохранилась. Очистите cookies для этого сайта и попробуйте снова."
-          );
-        }
+      await loadSummary();
+    } catch (err) {
+      setAuthError(err.message || "Ошибка авторизации");
+      authPinInput?.focus();
+    } finally {
+      authSubmitBtn.disabled = false;
+      authSubmitBtn.textContent = submitLabel;
+    }
+  }
 
-        await loadSummary();
-      } catch (err) {
-        setError(authErrorEl, err.message || "Ошибка авторизации");
-        authPinInput.focus();
-      } finally {
-        authSubmitBtn.disabled = false;
-        authSubmitBtn.textContent = submitLabel;
+  if (authForm) {
+    authForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitLogin();
+    });
+  }
+
+  if (authSubmitBtn) {
+    authSubmitBtn.addEventListener("click", () => {
+      submitLogin();
+    });
+  }
+
+  if (authPinInput) {
+    authPinInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitLogin();
       }
     });
   }
@@ -687,7 +728,7 @@
   updateNextIncomeCountdown();
   loadSummary().catch((err) => {
     if (err.message === "Требуется авторизация") {
-      setError(authErrorEl, "Введите PIN-код или пароль для входа");
+      setAuthError("Введите PIN-код или пароль для входа");
     } else {
       setError(errorEl, err.message || "Ошибка загрузки");
     }

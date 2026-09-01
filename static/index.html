@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#1a2e24" />
     <title>Доступные деньги</title>
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/style.css?v=3" />
   </head>
   <body>
     <div class="auth-screen" id="auth-screen" hidden>
       <div class="auth-card">
         <h1 class="auth-title">Доступные деньги</h1>
-        <p class="auth-subtitle">Введите PIN-код для входа</p>
-        <form id="auth-form" class="form" novalidate>
+        <p class="auth-subtitle" id="auth-subtitle">Введите PIN-код для входа</p>
+        <form id="auth-form" class="form" action="#" method="post" novalidate>
           <label class="field">
             <span>PIN-код или пароль</span>
             <input
@@ -25,8 +25,8 @@
               required
             />
           </label>
-          <p class="error" id="auth-error" hidden></p>
-          <button type="submit" class="submit" id="auth-submit-btn">Войти</button>
+          <p class="error" id="auth-error" role="alert" aria-live="assertive" hidden></p>
+          <button type="button" class="submit" id="auth-submit-btn">Войти</button>
         </form>
       </div>
     </div>
@@ -150,6 +150,6 @@
         <p class="empty" id="empty-state" hidden>Пока нет операций</p>
       </section>
     </div>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=3"></script>
   </body>
 </html>
