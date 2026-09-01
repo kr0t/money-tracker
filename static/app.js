@@ -312,19 +312,33 @@
     }
   }
 
-  function setAuthenticated(isAuth) {
+  function setAuthenticated(isAuth, options = {}) {
+    const { clearPin = false, clearAuthError = false } = options;
     if (isAuth) {
       if (authScreen) authScreen.hidden = true;
       if (appMain) appMain.hidden = false;
+      if (clearAuthError) {
+        setError(authErrorEl, "");
+      }
     } else {
       if (authScreen) authScreen.hidden = false;
       if (appMain) appMain.hidden = true;
-      if (authPinInput) {
+      if (clearPin && authPinInput) {
         authPinInput.value = "";
+      }
+      if (clearAuthError) {
+        setError(authErrorEl, "");
+      }
+      if (authPinInput) {
         setTimeout(() => authPinInput.focus(), 50);
       }
-      setError(authErrorEl, "");
     }
+  }
+
+  async function verifySession() {
+    const res = await fetch("/api/auth/check", { credentials: "same-origin" });
+    const data = await res.json();
+    return Boolean(data.authenticated);
   }
 
   async function apiFetch(url, options = {}) {
@@ -333,7 +347,7 @@
       credentials: "same-origin",
     });
     if (res.status === 401) {
-      setAuthenticated(false);
+      setAuthenticated(false, { clearPin: false, clearAuthError: false });
       throw new Error("Требуется авторизация");
     }
     return res;
@@ -615,6 +629,8 @@
       }
 
       authSubmitBtn.disabled = true;
+      const submitLabel = authSubmitBtn.textContent;
+      authSubmitBtn.textContent = "Вход...";
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
@@ -622,19 +638,33 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pin }),
         });
-        const data = await res.json();
+        let data = {};
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error("Сервер вернул некорректный ответ. Проверьте, что деплой завершился.");
+        }
         if (!res.ok) {
           if (res.status === 401) {
             throw new Error(data.error || "Неверный PIN-код или пароль");
           }
           throw new Error(data.error || "Не удалось войти. Проверьте настройки AUTH_PIN в Cloudflare.");
         }
+
+        const hasSession = await verifySession();
+        if (!hasSession) {
+          throw new Error(
+            "PIN принят, но сессия не сохранилась. Очистите cookies для этого сайта и попробуйте снова."
+          );
+        }
+
         await loadSummary();
       } catch (err) {
         setError(authErrorEl, err.message || "Ошибка авторизации");
         authPinInput.focus();
       } finally {
         authSubmitBtn.disabled = false;
+        authSubmitBtn.textContent = submitLabel;
       }
     });
   }
@@ -648,7 +678,7 @@
         // ignore network error
       } finally {
         logoutBtn.disabled = false;
-        setAuthenticated(false);
+        setAuthenticated(false, { clearPin: true, clearAuthError: true });
       }
     });
   }
@@ -656,7 +686,9 @@
   setKind("income");
   updateNextIncomeCountdown();
   loadSummary().catch((err) => {
-    if (err.message !== "Требуется авторизация") {
+    if (err.message === "Требуется авторизация") {
+      setError(authErrorEl, "Введите PIN-код или пароль для входа");
+    } else {
       setError(errorEl, err.message || "Ошибка загрузки");
     }
     balanceEl.textContent = "—";
