@@ -333,14 +333,29 @@
   function setAuthenticated(isAuth, options = {}) {
     const { clearPin = false, clearAuthError = false } = options;
     if (isAuth) {
-      if (authScreen) authScreen.hidden = true;
-      if (appMain) appMain.hidden = false;
+      if (authScreen) {
+        authScreen.hidden = true;
+        authScreen.style.display = "none";
+      }
+      if (appMain) {
+        appMain.hidden = false;
+        appMain.style.display = "";
+      }
+      if (clearPin && authPinInput) {
+        authPinInput.value = "";
+      }
       if (clearAuthError) {
         setAuthError("");
       }
     } else {
-      if (authScreen) authScreen.hidden = false;
-      if (appMain) appMain.hidden = true;
+      if (authScreen) {
+        authScreen.hidden = false;
+        authScreen.style.display = "flex";
+      }
+      if (appMain) {
+        appMain.hidden = true;
+        appMain.style.display = "none";
+      }
       if (clearPin && authPinInput) {
         authPinInput.value = "";
       }
@@ -679,7 +694,9 @@
       }
 
       await loadSummary();
+      setAuthError("");
     } catch (err) {
+      setAuthenticated(false, { clearPin: false, clearAuthError: false });
       setAuthError(err.message || "Ошибка авторизации");
       authPinInput?.focus();
     } finally {

@@ -43,11 +43,26 @@ body {
 }
 
 .auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 1.5rem 1rem;
+  background:
+    radial-gradient(120% 80% at 10% -10%, #2d4a3a 0%, transparent 55%),
+    radial-gradient(90% 60% at 100% 0%, #3a5c48 0%, transparent 45%),
+    linear-gradient(165deg, var(--bg-top), var(--bg-bottom));
+}
+
+.auth-screen[hidden] {
+  display: none !important;
+}
+
+#app-main[hidden] {
+  display: none !important;
 }
 
 .auth-card {
