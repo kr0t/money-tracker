@@ -328,7 +328,10 @@
   }
 
   async function apiFetch(url, options = {}) {
-    const res = await fetch(url, options);
+    const res = await fetch(url, {
+      ...options,
+      credentials: "same-origin",
+    });
     if (res.status === 401) {
       setAuthenticated(false);
       throw new Error("Требуется авторизация");
@@ -615,14 +618,17 @@
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pin }),
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || "Неверный PIN-код или пароль");
+          if (res.status === 401) {
+            throw new Error(data.error || "Неверный PIN-код или пароль");
+          }
+          throw new Error(data.error || "Не удалось войти. Проверьте настройки AUTH_PIN в Cloudflare.");
         }
-        setAuthenticated(true);
         await loadSummary();
       } catch (err) {
         setError(authErrorEl, err.message || "Ошибка авторизации");
@@ -637,7 +643,7 @@
     logoutBtn.addEventListener("click", async () => {
       logoutBtn.disabled = true;
       try {
-        await fetch("/api/auth/logout", { method: "POST" });
+        await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
       } catch {
         // ignore network error
       } finally {

@@ -4,12 +4,13 @@ import { getAuthTokenFromRequest, verifyAuthToken } from "./_auth.js";
 export async function onRequest(context) {
   const { request, env, next } = context;
   const url = new URL(request.url);
+  const pathname = url.pathname.replace(/\/+$/, "") || "/";
 
   // Allow auth endpoints without authentication
   if (
-    url.pathname === "/api/auth/login" ||
-    url.pathname === "/api/auth/check" ||
-    url.pathname === "/api/auth/logout"
+    pathname === "/api/auth/login" ||
+    pathname === "/api/auth/check" ||
+    pathname === "/api/auth/logout"
   ) {
     return next();
   }

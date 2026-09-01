@@ -24,6 +24,19 @@ function hexToBuffer(hex) {
   return bytes.buffer;
 }
 
+function encodePayloadB64(payloadStr) {
+  return btoa(payloadStr).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodePayloadB64(payloadB64) {
+  let base64 = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = base64.length % 4;
+  if (pad) {
+    base64 += "=".repeat(4 - pad);
+  }
+  return atob(base64);
+}
+
 async function getHmacKey(secret) {
   const enc = new TextEncoder();
   return crypto.subtle.importKey(
@@ -37,12 +50,25 @@ async function getHmacKey(secret) {
 
 function getSecret(env) {
   const secret = (env && (env.AUTH_SECRET || env.AUTH_PIN)) || "money-tracker-default-secret";
-  return String(secret);
+  const text = String(secret).trim();
+  return text || "money-tracker-default-secret";
 }
 
 export function getExpectedPin(env) {
-  const pin = env && env.AUTH_PIN !== undefined && env.AUTH_PIN !== null ? env.AUTH_PIN : DEFAULT_PIN;
-  return String(pin).trim();
+  let pin = env?.AUTH_PIN;
+  if (pin === undefined || pin === null) {
+    return DEFAULT_PIN;
+  }
+
+  pin = String(pin).trim();
+  if (
+    (pin.startsWith('"') && pin.endsWith('"')) ||
+    (pin.startsWith("'") && pin.endsWith("'"))
+  ) {
+    pin = pin.slice(1, -1).trim();
+  }
+
+  return pin || DEFAULT_PIN;
 }
 
 export async function createAuthToken(env) {
@@ -51,7 +77,7 @@ export async function createAuthToken(env) {
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
   };
   const payloadStr = JSON.stringify(payload);
-  const payloadB64 = btoa(payloadStr);
+  const payloadB64 = encodePayloadB64(payloadStr);
 
   const enc = new TextEncoder();
   const key = await getHmacKey(getSecret(env));
@@ -91,7 +117,7 @@ export async function verifyAuthToken(token, env) {
   }
 
   try {
-    const payloadStr = atob(payloadB64);
+    const payloadStr = decodePayloadB64(payloadB64);
     const payload = JSON.parse(payloadStr);
     const now = Math.floor(Date.now() / 1000);
     if (!payload.exp || payload.exp < now) {
@@ -106,10 +132,23 @@ export async function verifyAuthToken(token, env) {
 export function parseCookies(request) {
   const header = request.headers.get("Cookie") || "";
   const cookies = {};
-  header.split(";").forEach((cookie) => {
-    const [name, ...rest] = cookie.trim().split("=");
+  header.split(";").forEach((cookiePart) => {
+    const trimmed = cookiePart.trim();
+    if (!trimmed) {
+      return;
+    }
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) {
+      return;
+    }
+    const name = trimmed.slice(0, eqIndex).trim();
+    const value = trimmed.slice(eqIndex + 1);
     if (name) {
-      cookies[name] = decodeURIComponent(rest.join("="));
+      try {
+        cookies[name] = decodeURIComponent(value);
+      } catch {
+        cookies[name] = value;
+      }
     }
   });
   return cookies;
@@ -122,9 +161,7 @@ export function getAuthTokenFromRequest(request) {
 
 export function createAuthCookieHeader(token, isSecure = true) {
   const secureFlag = isSecure ? "Secure; " : "";
-  return `${COOKIE_NAME}=${encodeURIComponent(
-    token
-  )}; Path=/; HttpOnly; ${secureFlag}SameSite=Lax; Max-Age=${TOKEN_TTL_SECONDS}`;
+  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; ${secureFlag}SameSite=Lax; Max-Age=${TOKEN_TTL_SECONDS}`;
 }
 
 export function createLogoutCookieHeader(isSecure = true) {
