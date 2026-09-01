@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#1a2e24" />
     <title>Доступные деньги</title>
-    <link rel="stylesheet" href="/style.css?v=4" />
+    <link rel="stylesheet" href="/style.css?v=5" />
   </head>
   <body>
     <div class="auth-screen" id="auth-screen" hidden>
@@ -39,7 +39,10 @@
         </div>
         <p class="balance" id="balance" aria-live="polite">—</p>
         <p class="hint">после зарплат и трат</p>
-        <div class="next-income-badge" id="next-income" aria-live="polite"></div>
+        <div class="hero-badges">
+          <div class="next-income-badge" id="next-income" aria-live="polite"></div>
+          <div class="daily-budget-badge" id="daily-budget" aria-live="polite" hidden></div>
+        </div>
       </header>
 
       <section class="debts-section" aria-labelledby="debts-heading">
@@ -150,6 +153,6 @@
         <p class="empty" id="empty-state" hidden>Пока нет операций</p>
       </section>
     </div>
-    <script src="/app.js?v=4"></script>
+    <script src="/app.js?v=5"></script>
   </body>
 </html>

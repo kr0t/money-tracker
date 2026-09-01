@@ -159,7 +159,6 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-top: 0.85rem;
   padding: 0.35rem 0.85rem;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -168,6 +167,31 @@ body {
   color: #f5f1e8;
   font-weight: 500;
   letter-spacing: 0.01em;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.hero-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.daily-budget-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem 0.9rem;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  color: #f5f1e8;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }

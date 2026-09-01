@@ -32,6 +32,7 @@
   const cancelAddDebtBtn = document.getElementById("cancel-add-debt-btn");
   const clearTxBtn = document.getElementById("clear-tx-btn");
   const nextIncomeEl = document.getElementById("next-income");
+  const dailyBudgetEl = document.getElementById("daily-budget");
 
   let kind = "income";
   const debtKinds = new Map();
@@ -313,6 +314,7 @@
     balanceEl.textContent = formatMoney(summary.balance);
     debtTotalEl.textContent = formatMoney(summary.debt);
     renderDebts(summary.debts || []);
+    updateDailyBudget(summary.balance);
 
     listEl.innerHTML = "";
     const items = summary.transactions || [];
@@ -604,10 +606,7 @@
       });
   });
 
-  function updateNextIncomeCountdown() {
-    if (!nextIncomeEl) {
-      return;
-    }
+  function getNextIncomeDays() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth();
@@ -626,6 +625,35 @@
 
     const diffMs = target.getTime() - todayMidnight.getTime();
     const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    return { diffDays, target };
+  }
+
+  function updateDailyBudget(balance) {
+    if (!dailyBudgetEl) {
+      return;
+    }
+
+    const amount = Number(balance) || 0;
+    if (amount <= 0) {
+      dailyBudgetEl.hidden = true;
+      dailyBudgetEl.textContent = "";
+      return;
+    }
+
+    const { diffDays } = getNextIncomeDays();
+    const daysForCalc = diffDays === 0 ? 1 : diffDays;
+    const perDay = amount / daysForCalc;
+
+    dailyBudgetEl.hidden = false;
+    dailyBudgetEl.textContent = `Можно тратить в день: ${formatMoney(perDay)}`;
+  }
+
+  function updateNextIncomeCountdown() {
+    if (!nextIncomeEl) {
+      return;
+    }
+    const { diffDays, target } = getNextIncomeDays();
 
     if (diffDays === 0) {
       nextIncomeEl.textContent = `Поступление сегодня (${target.getDate()}-е число)!`;
