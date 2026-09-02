@@ -771,6 +771,27 @@
 
   setKind("income");
   updateNextIncomeCountdown();
+
+  function bindCollapsible(trigger, content) {
+    if (!trigger || !content) {
+      return;
+    }
+    trigger.addEventListener("click", () => {
+      const expanded = trigger.getAttribute("aria-expanded") === "true";
+      const nextExpanded = !expanded;
+      trigger.setAttribute("aria-expanded", nextExpanded ? "true" : "false");
+      trigger.classList.toggle("is-collapsed", !nextExpanded);
+      const section = trigger.closest(".collapsible-section");
+      if (section) {
+        section.classList.toggle("is-collapsed", !nextExpanded);
+      }
+      content.hidden = !nextExpanded;
+    });
+  }
+
+  bindCollapsible(document.getElementById("debts-toggle"), document.getElementById("debts-body"));
+  bindCollapsible(document.getElementById("tx-toggle"), document.getElementById("tx-body"));
+
   loadSummary().catch((err) => {
     if (err.message === "Требуется авторизация") {
       setAuthError("Введите PIN-код или пароль для входа");

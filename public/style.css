@@ -199,15 +199,88 @@ body {
 .panel,
 .history,
 .debts-section,
-.debt-item {
+.debt-item,
+.tx-group {
   background: var(--surface);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 
+.collapsible-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.collapsible-trigger h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.collapsible-trigger-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.collapsible-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.collapsible-chevron::before {
+  content: "▾";
+}
+
+.collapsible-trigger.is-collapsed .collapsible-chevron {
+  transform: rotate(-90deg);
+}
+
+.collapsible-section.is-collapsed .debts-section-head,
+.collapsible-section.is-collapsed .tx-section-head {
+  margin-bottom: 0;
+}
+
+.tx-group {
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+.tx-section-head {
+  margin-bottom: 1rem;
+}
+
 .panel {
   padding: 1rem;
   margin-top: 1rem;
+}
+
+.panel.panel--nested {
+  padding: 0;
+  margin-top: 0;
+  background: none;
+  box-shadow: none;
 }
 
 .debts-section {
@@ -216,18 +289,12 @@ body {
 }
 
 .debts-section-head {
-  display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
 .debts-section-head h2 {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.25rem;
-  font-weight: 600;
 }
 
 .debt-total {
@@ -489,6 +556,14 @@ body {
 .history {
   margin-top: 1rem;
   padding: 1.1rem 1rem 0.5rem;
+}
+
+.history.history--nested {
+  margin-top: 1rem;
+  padding: 1rem 0 0;
+  border-top: 1px solid #ddd5c6;
+  background: none;
+  box-shadow: none;
 }
 
 .history-head {

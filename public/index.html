@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#1a2e24" />
     <title>Доступные деньги</title>
-    <link rel="stylesheet" href="/style.css?v=5" />
+    <link rel="stylesheet" href="/style.css?v=6" />
   </head>
   <body>
     <div class="auth-screen" id="auth-screen" hidden>
@@ -45,114 +45,139 @@
         </div>
       </header>
 
-      <section class="debts-section" aria-labelledby="debts-heading">
-        <div class="debts-section-head">
+      <section class="debts-section collapsible-section" id="debts-section" aria-labelledby="debts-heading">
+        <button
+          type="button"
+          class="collapsible-trigger debts-section-head"
+          id="debts-toggle"
+          aria-expanded="true"
+          aria-controls="debts-body"
+        >
           <h2 id="debts-heading">Долги</h2>
-          <p class="debt-total" id="debt-total" aria-live="polite">—</p>
+          <div class="collapsible-trigger-meta">
+            <p class="debt-total" id="debt-total" aria-live="polite">—</p>
+            <span class="collapsible-chevron" aria-hidden="true"></span>
+          </div>
+        </button>
+
+        <div class="collapsible-content" id="debts-body">
+          <div id="debts-container"></div>
+          <p class="empty" id="debts-empty" hidden>Пока нет долгов</p>
+
+          <div class="add-debt-panel" id="add-debt-panel" hidden>
+            <form id="add-debt-form" class="form" novalidate>
+              <label class="field">
+                <span>Название</span>
+                <input
+                  id="new-debt-name"
+                  name="new-debt-name"
+                  type="text"
+                  maxlength="100"
+                  autocomplete="off"
+                  placeholder="кому или за что"
+                  required
+                />
+              </label>
+              <label class="field">
+                <span>Сумма долга</span>
+                <input
+                  id="new-debt-amount"
+                  name="new-debt-amount"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="необязательно"
+                />
+              </label>
+              <p class="error" id="add-debt-error" hidden></p>
+              <div class="add-debt-actions">
+                <button type="button" class="ghost-btn" id="cancel-add-debt-btn">Отмена</button>
+                <button type="submit" class="submit" id="add-debt-submit-btn">Сохранить</button>
+              </div>
+            </form>
+          </div>
+
+          <button type="button" class="add-debt-btn" id="add-debt-btn">+ Добавить долг</button>
         </div>
+      </section>
 
-        <div id="debts-container"></div>
-        <p class="empty" id="debts-empty" hidden>Пока нет долгов</p>
+      <section class="tx-group collapsible-section" id="tx-section" aria-labelledby="form-title">
+        <button
+          type="button"
+          class="collapsible-trigger tx-section-head"
+          id="tx-toggle"
+          aria-expanded="true"
+          aria-controls="tx-body"
+        >
+          <h2 id="form-title">Доходы и траты</h2>
+          <span class="collapsible-chevron" aria-hidden="true"></span>
+        </button>
 
-        <div class="add-debt-panel" id="add-debt-panel" hidden>
-          <form id="add-debt-form" class="form" novalidate>
-            <label class="field">
-              <span>Название</span>
-              <input
-                id="new-debt-name"
-                name="new-debt-name"
-                type="text"
-                maxlength="100"
-                autocomplete="off"
-                placeholder="кому или за что"
-                required
-              />
-            </label>
-            <label class="field">
-              <span>Сумма долга</span>
-              <input
-                id="new-debt-amount"
-                name="new-debt-amount"
-                type="text"
-                inputmode="decimal"
-                autocomplete="off"
-                placeholder="необязательно"
-              />
-            </label>
-            <p class="error" id="add-debt-error" hidden></p>
-            <div class="add-debt-actions">
-              <button type="button" class="ghost-btn" id="cancel-add-debt-btn">Отмена</button>
-              <button type="submit" class="submit" id="add-debt-submit-btn">Сохранить</button>
+        <div class="collapsible-content" id="tx-body">
+          <div class="panel panel--nested">
+            <div class="tabs" role="tablist" aria-label="Тип операции">
+              <button
+                type="button"
+                class="tab is-active"
+                role="tab"
+                id="tab-income"
+                aria-selected="true"
+                data-kind="income"
+              >
+                Поступило
+              </button>
+              <button
+                type="button"
+                class="tab"
+                role="tab"
+                id="tab-expense"
+                aria-selected="false"
+                data-kind="expense"
+              >
+                Потратил
+              </button>
             </div>
-          </form>
+
+            <form id="tx-form" class="form" novalidate>
+              <label class="field">
+                <span>Сумма</span>
+                <input
+                  id="amount"
+                  name="amount"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="1 000.00"
+                  required
+                />
+              </label>
+              <label class="field">
+                <span>Комментарий</span>
+                <input
+                  id="note"
+                  name="note"
+                  type="text"
+                  maxlength="200"
+                  autocomplete="off"
+                  placeholder="необязательно"
+                />
+              </label>
+              <p class="error" id="form-error" hidden></p>
+              <button type="submit" class="submit" id="submit-btn">Сохранить</button>
+            </form>
+          </div>
+
+          <section class="history history--nested" aria-labelledby="history-title">
+            <div class="history-head">
+              <h2 id="history-title">Последние операции</h2>
+              <button type="button" class="clear-btn" id="clear-tx-btn">Очистить</button>
+            </div>
+            <ul class="list" id="tx-list"></ul>
+            <p class="empty" id="empty-state" hidden>Пока нет операций</p>
+          </section>
         </div>
-
-        <button type="button" class="add-debt-btn" id="add-debt-btn">+ Добавить долг</button>
-      </section>
-
-      <section class="panel" aria-labelledby="form-title">
-        <h2 id="form-title" class="section-title">Доходы и траты</h2>
-        <div class="tabs" role="tablist" aria-label="Тип операции">
-          <button
-            type="button"
-            class="tab is-active"
-            role="tab"
-            id="tab-income"
-            aria-selected="true"
-            data-kind="income"
-          >
-            Поступило
-          </button>
-          <button
-            type="button"
-            class="tab"
-            role="tab"
-            id="tab-expense"
-            aria-selected="false"
-            data-kind="expense"
-          >
-            Потратил
-          </button>
-        </div>
-
-        <form id="tx-form" class="form" novalidate>
-          <label class="field">
-            <span>Сумма</span>
-            <input
-              id="amount"
-              name="amount"
-              type="text"
-              inputmode="decimal"
-              autocomplete="off"
-              placeholder="1 000.00"
-              required
-            />
-          </label>
-          <label class="field">
-            <span>Комментарий</span>
-            <input
-              id="note"
-              name="note"
-              type="text"
-              maxlength="200"
-              autocomplete="off"
-              placeholder="необязательно"
-            />
-          </label>
-          <p class="error" id="form-error" hidden></p>
-          <button type="submit" class="submit" id="submit-btn">Сохранить</button>
-        </form>
-      </section>
-
-      <section class="history" aria-labelledby="history-title">
-        <div class="history-head">
-          <h2 id="history-title">Последние операции</h2>
-          <button type="button" class="clear-btn" id="clear-tx-btn">Очистить</button>
-        </div>
-        <ul class="list" id="tx-list"></ul>
-        <p class="empty" id="empty-state" hidden>Пока нет операций</p>
       </section>
     </div>
-    <script src="/app.js?v=5"></script>
+    <script src="/app.js?v=6"></script>
   </body>
 </html>
