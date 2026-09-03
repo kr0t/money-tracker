@@ -23,3 +23,8 @@ CREATE TABLE IF NOT EXISTS debt_transactions (
     linked_tx_id INTEGER REFERENCES transactions(id),
     debt_id INTEGER REFERENCES debts(id)
 );
+
+CREATE TABLE IF NOT EXISTS processed_requests (
+    request_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+);

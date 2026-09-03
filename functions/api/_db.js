@@ -102,6 +102,12 @@ export async function ensureSchema(db) {
         debt_id INTEGER REFERENCES debts(id)
       )
     `),
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS processed_requests (
+        request_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      )
+    `),
   ]);
   schemaInitialized = true;
 }
@@ -170,6 +176,7 @@ function serializeTx(row) {
     amount: row.amount / 100,
     note: row.note,
     created_at: row.created_at,
+    linked_to_debt: Boolean(row.linked_to_debt),
   };
 }
 
@@ -192,9 +199,12 @@ export async function getSummary(db, limit = 50) {
 
   const { results: txRows } = await db
     .prepare(
-      `SELECT id, kind, amount, note, created_at
-       FROM transactions
-       ORDER BY id DESC
+      `SELECT t.id, t.kind, t.amount, t.note, t.created_at,
+              EXISTS(
+                SELECT 1 FROM debt_transactions d WHERE d.linked_tx_id = t.id
+              ) AS linked_to_debt
+       FROM transactions t
+       ORDER BY t.id DESC
        LIMIT ?`
     )
     .bind(limit)
@@ -235,7 +245,7 @@ export async function getSummary(db, limit = 50) {
   };
 }
 
-export async function addTransaction(db, kind, amountCents, note = "") {
+export async function addTransaction(db, kind, amountCents, note = "", requestId = null) {
   await ensureSchema(db);
   if (kind !== KIND_INCOME && kind !== KIND_EXPENSE) {
     throw new Error("kind must be 'income' or 'expense'");
@@ -243,6 +253,9 @@ export async function addTransaction(db, kind, amountCents, note = "") {
   if (amountCents <= 0) {
     throw new Error("amount must be positive");
   }
+
+  const cleanRequestId =
+    typeof requestId === "string" && requestId.trim() ? requestId.trim().slice(0, 80) : null;
   const cleanNote = (note || "").trim();
   const createdAt = utcNow();
 
@@ -250,6 +263,18 @@ export async function addTransaction(db, kind, amountCents, note = "") {
     const balance = await getBalanceCents(db);
     if (amountCents > balance) {
       throw new Error("сумма больше доступного баланса");
+    }
+  }
+
+  if (cleanRequestId) {
+    const reserved = await db
+      .prepare(
+        "INSERT OR IGNORE INTO processed_requests (request_id, created_at) VALUES (?, ?)"
+      )
+      .bind(cleanRequestId, createdAt)
+      .run();
+    if (!reserved.meta?.changes) {
+      return { duplicate: true, transaction: null };
     }
   }
 
@@ -262,12 +287,16 @@ export async function addTransaction(db, kind, amountCents, note = "") {
     .run();
 
   const txId = result.meta?.last_row_id;
+
   return {
-    id: txId,
-    kind,
-    amount: amountCents / 100,
-    note: cleanNote,
-    created_at: createdAt,
+    duplicate: false,
+    transaction: {
+      id: txId,
+      kind,
+      amount: amountCents / 100,
+      note: cleanNote,
+      created_at: createdAt,
+    },
   };
 }
 
@@ -378,6 +407,45 @@ export async function addDebt(db, debtId, kind, amountCents, note = "") {
     linked_tx_id: linkedTxId,
     debt_id: debtId,
   };
+}
+
+export async function deleteTransaction(db, txId) {
+  await ensureSchema(db);
+  const id = Number(txId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("некорректный id операции");
+  }
+
+  const row = await db
+    .prepare(
+      `SELECT id, kind, amount, note, created_at
+       FROM transactions
+       WHERE id = ?`
+    )
+    .bind(id)
+    .first();
+
+  if (!row) {
+    throw new Error("операция не найдена");
+  }
+
+  const linkedDebtTx = await db
+    .prepare(
+      `SELECT id FROM debt_transactions WHERE linked_tx_id = ?`
+    )
+    .bind(id)
+    .first();
+
+  if (linkedDebtTx) {
+    await db.batch([
+      db.prepare("DELETE FROM debt_transactions WHERE id = ?").bind(linkedDebtTx.id),
+      db.prepare("DELETE FROM transactions WHERE id = ?").bind(id),
+    ]);
+  } else {
+    await db.prepare("DELETE FROM transactions WHERE id = ?").bind(id).run();
+  }
+
+  return getSummary(db);
 }
 
 export async function clearTransactions(db) {

@@ -201,9 +201,12 @@
     }
   }
 
-  function makeItem({ title, meta, amountText, amountClass }) {
+  function makeItem({ title, meta, amountText, amountClass, undo = null }) {
     const li = document.createElement("li");
     li.className = "item";
+    if (undo) {
+      li.classList.add("item--with-undo");
+    }
 
     const titleEl = document.createElement("div");
     titleEl.className = "item-title";
@@ -218,6 +221,17 @@
     amountEl.textContent = amountText;
 
     li.append(titleEl, metaEl, amountEl);
+
+    if (undo) {
+      const undoBtn = document.createElement("button");
+      undoBtn.type = "button";
+      undoBtn.className = "undo-btn";
+      undoBtn.textContent = "Отменить";
+      undoBtn.title = "Отменить операцию";
+      undoBtn.addEventListener("click", () => undo(undoBtn));
+      li.append(undoBtn);
+    }
+
     return li;
   }
 
@@ -321,14 +335,50 @@
     emptyEl.hidden = items.length > 0;
     for (const tx of items) {
       const when = tx.created_at ? dateFmt.format(new Date(tx.created_at)) : "";
+      const isIncome = tx.kind === "income";
       listEl.append(
         makeItem({
-          title: tx.note || (tx.kind === "income" ? "Поступление" : "Трата"),
-          meta: `${tx.kind === "income" ? "Поступило" : "Потратил"} · ${when}`,
-          amountText: `${tx.kind === "income" ? "+" : "−"}${formatMoney(tx.amount)}`,
+          title: tx.note || (isIncome ? "Поступление" : "Трата"),
+          meta: `${isIncome ? "Поступило" : "Потратил"} · ${when}`,
+          amountText: `${isIncome ? "+" : "−"}${formatMoney(tx.amount)}`,
           amountClass: tx.kind,
+          undo: (btn) => undoTransaction(tx, btn),
         })
       );
+    }
+  }
+
+  async function undoTransaction(tx, btn) {
+    const isIncome = tx.kind === "income";
+    let message = isIncome
+      ? `Отменить поступление ${formatMoney(tx.amount)}? Сумма будет вычтена из «Доступно».`
+      : `Отменить списание ${formatMoney(tx.amount)}? Сумма вернётся в «Доступно».`;
+
+    if (tx.linked_to_debt) {
+      message =
+        `Отменить возврат долга ${formatMoney(tx.amount)}? ` +
+        `Сумма вернётся в «Доступно», а долг снова увеличится.`;
+    }
+
+    if (!window.confirm(message)) {
+      return;
+    }
+
+    btn.disabled = true;
+    try {
+      const res = await apiFetch("/api/transactions/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: tx.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Не удалось отменить");
+      }
+      renderSummary(data.summary);
+    } catch (err) {
+      btn.disabled = false;
+      window.alert(err.message || "Ошибка сети");
     }
   }
 
@@ -407,6 +457,8 @@
     return true;
   }
 
+  let submitInFlight = false;
+
   async function submitAmount({ amountInput: input, noteInput: noteEl, errorEl: errEl, submitBtn: btn, endpoint, payload }) {
     setError(errEl, "");
     const amount = parseAmountValue(input.value);
@@ -414,7 +466,17 @@
       return;
     }
 
+    if (submitInFlight || btn.disabled) {
+      return;
+    }
+
+    submitInFlight = true;
     btn.disabled = true;
+    const requestId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
     try {
       const res = await apiFetch(endpoint, {
         method: "POST",
@@ -422,6 +484,7 @@
         body: JSON.stringify({
           amount,
           note: noteEl.value.trim(),
+          request_id: requestId,
           ...payload,
         }),
       });
@@ -435,6 +498,7 @@
     } catch (err) {
       setError(errEl, err.message || "Ошибка сети");
     } finally {
+      submitInFlight = false;
       btn.disabled = false;
     }
   }

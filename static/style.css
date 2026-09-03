@@ -630,6 +630,34 @@ body {
   border-top: 1px solid #ddd5c6;
 }
 
+.item--with-undo {
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "title amount"
+    "meta undo";
+}
+
+.item--with-undo .item-title {
+  grid-area: title;
+}
+
+.item--with-undo .item-meta {
+  grid-area: meta;
+  grid-column: auto;
+}
+
+.item--with-undo .item-amount {
+  grid-area: amount;
+  grid-row: auto;
+  align-self: end;
+}
+
+.item--with-undo .undo-btn {
+  grid-area: undo;
+  justify-self: end;
+  align-self: start;
+}
+
 .item-title {
   font-weight: 600;
 }
@@ -646,6 +674,30 @@ body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.undo-btn {
+  min-height: 28px;
+  margin-top: 0.15rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #d2cbbd;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.undo-btn:hover {
+  border-color: var(--expense);
+  color: var(--expense);
+}
+
+.undo-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 .item-amount.income {
