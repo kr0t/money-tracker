@@ -670,6 +670,22 @@
       });
   });
 
+  /** If payday falls on Sat/Sun, shift to the previous Friday. */
+  function toPreviousWorkday(date) {
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const weekday = d.getDay();
+    if (weekday === 0) {
+      d.setDate(d.getDate() - 2);
+    } else if (weekday === 6) {
+      d.setDate(d.getDate() - 1);
+    }
+    return d;
+  }
+
+  function getPayday(year, month, day) {
+    return toPreviousWorkday(new Date(year, month, day));
+  }
+
   function getNextIncomeDays() {
     const now = new Date();
     const year = now.getFullYear();
@@ -677,15 +693,14 @@
     const date = now.getDate();
 
     const todayMidnight = new Date(year, month, date);
-    let target;
-
-    if (date <= 5) {
-      target = new Date(year, month, 5);
-    } else if (date <= 20) {
-      target = new Date(year, month, 20);
-    } else {
-      target = new Date(year, month + 1, 5);
-    }
+    const candidates = [
+      getPayday(year, month, 5),
+      getPayday(year, month, 20),
+      getPayday(year, month + 1, 5),
+    ];
+    const target =
+      candidates.find((d) => d.getTime() >= todayMidnight.getTime()) ||
+      getPayday(year, month + 1, 20);
 
     const diffMs = target.getTime() - todayMidnight.getTime();
     const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
