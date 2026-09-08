@@ -1,8 +1,10 @@
 // Authentication & HMAC crypto helpers for Cloudflare Pages Functions
 
 const COOKIE_NAME = "mt_auth";
-const DEFAULT_PIN = "1234";
 const TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const MIN_SECRET_LENGTH = 16;
+
+export class AuthConfigError extends Error {}
 
 function bufferToHex(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -48,30 +50,44 @@ async function getHmacKey(secret) {
   );
 }
 
-function getSecret(env) {
-  const secret = (env && (env.AUTH_SECRET || env.AUTH_PIN)) || "money-tracker-default-secret";
-  const text = String(secret).trim();
-  return text || "money-tracker-default-secret";
+function cleanEnvValue(raw) {
+  let text = String(raw ?? "").trim();
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  ) {
+    text = text.slice(1, -1).trim();
+  }
+  return text;
 }
 
-export function getExpectedPin(env) {
-  let pin = env?.AUTH_PIN;
-  if (pin === undefined || pin === null) {
-    return DEFAULT_PIN;
+// Fail-closed: AUTH_PIN and AUTH_SECRET are mandatory. No default PIN,
+// no default signing secret. Throws AuthConfigError on any misconfiguration.
+export function getAuthConfig(env) {
+  const pin = cleanEnvValue(env?.AUTH_PIN);
+  const secret = cleanEnvValue(env?.AUTH_SECRET);
+
+  if (!pin) {
+    throw new AuthConfigError("AUTH_PIN is not configured");
+  }
+  if (!secret) {
+    throw new AuthConfigError("AUTH_SECRET is not configured");
+  }
+  if (secret.length < MIN_SECRET_LENGTH) {
+    throw new AuthConfigError(
+      `AUTH_SECRET must be at least ${MIN_SECRET_LENGTH} characters (use: openssl rand -hex 32)`
+    );
+  }
+  if (secret === pin) {
+    throw new AuthConfigError("AUTH_SECRET must differ from AUTH_PIN");
   }
 
-  pin = String(pin).trim();
-  if (
-    (pin.startsWith('"') && pin.endsWith('"')) ||
-    (pin.startsWith("'") && pin.endsWith("'"))
-  ) {
-    pin = pin.slice(1, -1).trim();
-  }
-
-  return pin || DEFAULT_PIN;
+  return { pin, secret };
 }
 
 export async function createAuthToken(env) {
+  const { secret } = getAuthConfig(env);
+
   const payload = {
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
@@ -80,7 +96,7 @@ export async function createAuthToken(env) {
   const payloadB64 = encodePayloadB64(payloadStr);
 
   const enc = new TextEncoder();
-  const key = await getHmacKey(getSecret(env));
+  const key = await getHmacKey(secret);
   const signatureBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(payloadB64));
   const signatureHex = bufferToHex(signatureBuffer);
 
@@ -88,6 +104,14 @@ export async function createAuthToken(env) {
 }
 
 export async function verifyAuthToken(token, env) {
+  let secret;
+  try {
+    secret = getAuthConfig(env).secret;
+  } catch {
+    // Fail-closed: without a valid secret nothing can be verified.
+    return false;
+  }
+
   if (!token || typeof token !== "string") {
     return false;
   }
@@ -104,7 +128,7 @@ export async function verifyAuthToken(token, env) {
   }
 
   const enc = new TextEncoder();
-  const key = await getHmacKey(getSecret(env));
+  const key = await getHmacKey(secret);
   const isValidSig = await crypto.subtle.verify(
     "HMAC",
     key,

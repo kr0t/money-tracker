@@ -28,3 +28,9 @@ CREATE TABLE IF NOT EXISTS processed_requests (
     request_id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+    ip TEXT PRIMARY KEY,
+    window_start INTEGER NOT NULL,
+    fail_count INTEGER NOT NULL
+);

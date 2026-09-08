@@ -5,6 +5,8 @@ services:
       HOST: "0.0.0.0"
       PORT: "8080"
       DATA_DIR: "/data"
+      AUTH_PIN: ${AUTH_PIN:?AUTH_PIN is required}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
     volumes:
       - money_data:/data
     expose:

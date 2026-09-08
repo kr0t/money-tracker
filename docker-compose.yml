@@ -2,11 +2,13 @@ services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       HOST: "0.0.0.0"
       PORT: "8080"
       DATA_DIR: "/data"
+      AUTH_PIN: ${AUTH_PIN:?AUTH_PIN is required, see .env.example}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required, see .env.example}
     volumes:
       - money_data:/data
     restart: unless-stopped

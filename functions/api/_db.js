@@ -7,12 +7,13 @@ export const DEBT_REPAY = "repay";
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
-export function jsonResponse(data, status = 200) {
+export function jsonResponse(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      ...extraHeaders,
     },
   });
 }
@@ -106,6 +107,13 @@ export async function ensureSchema(db) {
       CREATE TABLE IF NOT EXISTS processed_requests (
         request_id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL
+      )
+    `),
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        ip TEXT PRIMARY KEY,
+        window_start INTEGER NOT NULL,
+        fail_count INTEGER NOT NULL
       )
     `),
   ]);

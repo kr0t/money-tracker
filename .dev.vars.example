@@ -1,5 +1,7 @@
 # Секреты и переменные для локальной разработки (Wrangler Pages Dev)
-# Скопируйте этот файл в .dev.vars и задайте свои значения
+# Скопируйте этот файл в .dev.vars и задайте свои значения.
+# Файл .dev.vars игнорируется git'ом.
 
-AUTH_PIN="1234"
-AUTH_SECRET="your-random-secret-key-for-jwt-tokens"
+AUTH_PIN="change-me"
+# Сгенерируйте секрет: openssl rand -hex 32
+AUTH_SECRET=""
