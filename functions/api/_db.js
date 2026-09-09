@@ -7,6 +7,20 @@ export const DEBT_REPAY = "repay";
 
 const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 
+const BALANCE_CENTS_EXPR = `COALESCE(SUM(
+  CASE kind
+    WHEN 'income' THEN amount
+    WHEN 'expense' THEN -amount
+  END
+), 0)`;
+
+const DEBT_CENTS_EXPR = `COALESCE(SUM(
+  CASE kind
+    WHEN 'borrow' THEN amount
+    WHEN 'repay' THEN -amount
+  END
+), 0)`;
+
 export function jsonResponse(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -126,14 +140,7 @@ export function utcNow() {
 
 export async function getBalanceCents(db) {
   const row = await db
-    .prepare(
-      `SELECT COALESCE(SUM(
-         CASE kind
-           WHEN 'income' THEN amount
-           WHEN 'expense' THEN -amount
-         END
-       ), 0) AS balance FROM transactions`
-    )
+    .prepare(`SELECT ${BALANCE_CENTS_EXPR} AS balance FROM transactions`)
     .first();
   return row ? Number(row.balance) : 0;
 }
@@ -141,26 +148,12 @@ export async function getBalanceCents(db) {
 export async function getDebtCents(db, debtId = null) {
   if (debtId === null) {
     const row = await db
-      .prepare(
-        `SELECT COALESCE(SUM(
-           CASE kind
-             WHEN 'borrow' THEN amount
-             WHEN 'repay' THEN -amount
-           END
-         ), 0) AS debt FROM debt_transactions`
-      )
+      .prepare(`SELECT ${DEBT_CENTS_EXPR} AS debt FROM debt_transactions`)
       .first();
     return row ? Number(row.debt) : 0;
   }
   const row = await db
-    .prepare(
-      `SELECT COALESCE(SUM(
-         CASE kind
-           WHEN 'borrow' THEN amount
-           WHEN 'repay' THEN -amount
-         END
-       ), 0) AS debt FROM debt_transactions WHERE debt_id = ?`
-    )
+    .prepare(`SELECT ${DEBT_CENTS_EXPR} AS debt FROM debt_transactions WHERE debt_id = ?`)
     .bind(debtId)
     .first();
   return row ? Number(row.debt) : 0;
@@ -267,13 +260,6 @@ export async function addTransaction(db, kind, amountCents, note = "", requestId
   const cleanNote = (note || "").trim();
   const createdAt = utcNow();
 
-  if (kind === KIND_EXPENSE) {
-    const balance = await getBalanceCents(db);
-    if (amountCents > balance) {
-      throw new Error("сумма больше доступного баланса");
-    }
-  }
-
   if (cleanRequestId) {
     const reserved = await db
       .prepare(
@@ -286,13 +272,35 @@ export async function addTransaction(db, kind, amountCents, note = "", requestId
     }
   }
 
-  const result = await db
-    .prepare(
-      `INSERT INTO transactions (kind, amount, note, created_at)
-       VALUES (?, ?, ?, ?)`
-    )
-    .bind(kind, amountCents, cleanNote, createdAt)
-    .run();
+  let result;
+  if (kind === KIND_EXPENSE) {
+    result = await db
+      .prepare(
+        `INSERT INTO transactions (kind, amount, note, created_at)
+         SELECT 'expense', ?, ?, ?
+         WHERE ? <= (SELECT ${BALANCE_CENTS_EXPR} FROM transactions)`
+      )
+      .bind(amountCents, cleanNote, createdAt, amountCents)
+      .run();
+
+    if (!result.meta?.changes) {
+      if (cleanRequestId) {
+        await db
+          .prepare("DELETE FROM processed_requests WHERE request_id = ?")
+          .bind(cleanRequestId)
+          .run();
+      }
+      throw new Error("сумма больше доступного баланса");
+    }
+  } else {
+    result = await db
+      .prepare(
+        `INSERT INTO transactions (kind, amount, note, created_at)
+         VALUES (?, ?, ?, ?)`
+      )
+      .bind(kind, amountCents, cleanNote, createdAt)
+      .run();
+  }
 
   const txId = result.meta?.last_row_id;
 
@@ -322,16 +330,21 @@ export async function createDebt(db, name, initialAmountCents = 0) {
   }
 
   const createdAt = utcNow();
-  const result = await db
-    .prepare("INSERT INTO debts (name, created_at) VALUES (?, ?)")
-    .bind(cleanName, createdAt)
-    .run();
 
-  const debtId = result.meta?.last_row_id;
-
+  const statements = [
+    db.prepare("INSERT INTO debts (name, created_at) VALUES (?, ?)").bind(cleanName, createdAt),
+  ];
   if (initialAmountCents > 0) {
-    await addDebt(db, debtId, DEBT_BORROW, initialAmountCents, "");
+    statements.push(
+      db.prepare(
+        `INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
+         SELECT 'borrow', ?, ?, ?, NULL, (SELECT MAX(id) FROM debts)`
+      ).bind(initialAmountCents, "", createdAt)
+    );
   }
+  const results = await db.batch(statements);
+
+  const debtId = results[0].meta?.last_row_id;
 
   const debtRow = await getDebtRow(db, debtId);
   const debtBalance = await getDebtCents(db, debtId);
@@ -368,43 +381,79 @@ export async function addDebt(db, debtId, kind, amountCents, note = "") {
   const createdAt = utcNow();
   const debtRow = await getDebtRow(db, debtId);
 
-  let linkedTxId = null;
+  if (kind === DEBT_BORROW) {
+    const result = await db
+      .prepare(
+        `INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
+         SELECT 'borrow', ?, ?, ?, NULL, ?
+         WHERE EXISTS (SELECT 1 FROM debts WHERE id = ?)`
+      )
+      .bind(amountCents, cleanNote, createdAt, debtId, debtId)
+      .run();
 
-  if (kind === DEBT_REPAY) {
+    if (!result.meta?.changes) {
+      throw new Error("долг не найден");
+    }
+
+    return {
+      id: result.meta?.last_row_id,
+      kind,
+      amount: amountCents / 100,
+      note: cleanNote,
+      created_at: createdAt,
+      linked_tx_id: null,
+      debt_id: debtId,
+    };
+  }
+
+  let expenseNote = cleanNote ? `Вернул долг: ${cleanNote}` : `Вернул долг: ${debtRow.name}`;
+  if (cleanNote && !cleanNote.toLowerCase().startsWith("вернул")) {
+    expenseNote = `Вернул долг (${debtRow.name}): ${cleanNote}`;
+  }
+
+  const insertTx = await db
+    .prepare(
+      `INSERT INTO transactions (kind, amount, note, created_at)
+       SELECT 'expense', ?, ?, ?
+       WHERE ? <= (SELECT ${BALANCE_CENTS_EXPR} FROM transactions)
+         AND ? <= (SELECT ${DEBT_CENTS_EXPR} FROM debt_transactions WHERE debt_id = ?)
+         AND EXISTS (SELECT 1 FROM debts WHERE id = ?)`
+    )
+    .bind(amountCents, expenseNote, createdAt, amountCents, amountCents, debtId, debtId)
+    .run();
+
+  if (!insertTx.meta?.changes) {
+    await getDebtRow(db, debtId);
     const debtBalance = await getDebtCents(db, debtId);
     if (amountCents > debtBalance) {
       throw new Error("сумма больше текущего долга");
     }
-
-    const availableBalance = await getBalanceCents(db);
-    if (amountCents > availableBalance) {
-      throw new Error("сумма больше доступного баланса");
-    }
-
-    let expenseNote = cleanNote ? `Вернул долг: ${cleanNote}` : `Вернул долг: ${debtRow.name}`;
-    if (cleanNote && !cleanNote.toLowerCase().startsWith("вернул")) {
-      expenseNote = `Вернул долг (${debtRow.name}): ${cleanNote}`;
-    }
-
-    const txResult = await db
-      .prepare(
-        `INSERT INTO transactions (kind, amount, note, created_at)
-         VALUES (?, ?, ?, ?)`
-      )
-      .bind(KIND_EXPENSE, amountCents, expenseNote, createdAt)
-      .run();
-    linkedTxId = txResult.meta?.last_row_id;
+    throw new Error("сумма больше доступного баланса");
   }
 
-  const result = await db
-    .prepare(
-      `INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .bind(kind, amountCents, cleanNote, createdAt, linkedTxId, debtId)
-    .run();
+  const txId = insertTx.meta?.last_row_id;
 
-  const debtTxId = result.meta?.last_row_id;
+  let debtTxId;
+  try {
+    const result = await db
+      .prepare(
+        `INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .bind(kind, amountCents, cleanNote, createdAt, txId, debtId)
+      .run();
+    debtTxId = result.meta?.last_row_id;
+  } catch (err) {
+    await db
+      .prepare(
+        `DELETE FROM transactions WHERE id = ? AND NOT EXISTS (
+           SELECT 1 FROM debt_transactions WHERE linked_tx_id = ?
+         )`
+      )
+      .bind(txId, txId)
+      .run();
+    throw err;
+  }
 
   return {
     id: debtTxId,
@@ -412,7 +461,7 @@ export async function addDebt(db, debtId, kind, amountCents, note = "") {
     amount: amountCents / 100,
     note: cleanNote,
     created_at: createdAt,
-    linked_tx_id: linkedTxId,
+    linked_tx_id: txId,
     debt_id: debtId,
   };
 }
@@ -424,33 +473,13 @@ export async function deleteTransaction(db, txId) {
     throw new Error("некорректный id операции");
   }
 
-  const row = await db
-    .prepare(
-      `SELECT id, kind, amount, note, created_at
-       FROM transactions
-       WHERE id = ?`
-    )
-    .bind(id)
-    .first();
+  const results = await db.batch([
+    db.prepare("DELETE FROM debt_transactions WHERE linked_tx_id = ?").bind(id),
+    db.prepare("DELETE FROM transactions WHERE id = ?").bind(id),
+  ]);
 
-  if (!row) {
+  if (!results[1].meta?.changes) {
     throw new Error("операция не найдена");
-  }
-
-  const linkedDebtTx = await db
-    .prepare(
-      `SELECT id FROM debt_transactions WHERE linked_tx_id = ?`
-    )
-    .bind(id)
-    .first();
-
-  if (linkedDebtTx) {
-    await db.batch([
-      db.prepare("DELETE FROM debt_transactions WHERE id = ?").bind(linkedDebtTx.id),
-      db.prepare("DELETE FROM transactions WHERE id = ?").bind(id),
-    ]);
-  } else {
-    await db.prepare("DELETE FROM transactions WHERE id = ?").bind(id).run();
   }
 
   return getSummary(db);

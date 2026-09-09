@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,13 +17,51 @@ KIND_EXPENSE = "expense"
 DEBT_BORROW = "borrow"
 DEBT_REPAY = "repay"
 
+BALANCE_CENTS_EXPR = """
+COALESCE(SUM(CASE kind
+    WHEN 'income' THEN amount
+    WHEN 'expense' THEN -amount
+END), 0)"""
+
+DEBT_CENTS_EXPR = """
+COALESCE(SUM(CASE kind
+    WHEN 'borrow' THEN amount
+    WHEN 'repay' THEN -amount
+END), 0)"""
+
 
 def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
+
+
+@contextmanager
+def _connection():
+    conn = _connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def _transaction(conn: sqlite3.Connection):
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
+    else:
+        conn.execute("COMMIT")
 
 
 def _utc_now() -> str:
@@ -35,7 +74,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def init_db() -> None:
-    with _connect() as conn:
+    with _connection() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS transactions (
@@ -80,31 +119,22 @@ def init_db() -> None:
             "SELECT COUNT(*) AS cnt FROM debt_transactions WHERE debt_id IS NULL"
         ).fetchone()["cnt"]
         if orphan_count:
-            created_at = _utc_now()
-            cur = conn.execute(
-                "INSERT INTO debts (name, created_at) VALUES (?, ?)",
-                ("Долг", created_at),
-            )
-            default_id = cur.lastrowid
-            conn.execute(
-                "UPDATE debt_transactions SET debt_id = ? WHERE debt_id IS NULL",
-                (default_id,),
-            )
-
-        conn.commit()
+            with _transaction(conn):
+                created_at = _utc_now()
+                cur = conn.execute(
+                    "INSERT INTO debts (name, created_at) VALUES (?, ?)",
+                    ("Долг", created_at),
+                )
+                default_id = cur.lastrowid
+                conn.execute(
+                    "UPDATE debt_transactions SET debt_id = ? WHERE debt_id IS NULL",
+                    (default_id,),
+                )
 
 
 def _balance_cents(conn: sqlite3.Connection) -> int:
     row = conn.execute(
-        """
-        SELECT COALESCE(SUM(
-            CASE kind
-                WHEN 'income' THEN amount
-                WHEN 'expense' THEN -amount
-            END
-        ), 0) AS balance
-        FROM transactions
-        """
+        f"SELECT {BALANCE_CENTS_EXPR} AS balance FROM transactions"
     ).fetchone()
     return int(row["balance"])
 
@@ -112,28 +142,11 @@ def _balance_cents(conn: sqlite3.Connection) -> int:
 def _debt_cents(conn: sqlite3.Connection, debt_id: int | None = None) -> int:
     if debt_id is None:
         row = conn.execute(
-            """
-            SELECT COALESCE(SUM(
-                CASE kind
-                    WHEN 'borrow' THEN amount
-                    WHEN 'repay' THEN -amount
-                END
-            ), 0) AS debt
-            FROM debt_transactions
-            """
+            f"SELECT {DEBT_CENTS_EXPR} AS debt FROM debt_transactions"
         ).fetchone()
     else:
         row = conn.execute(
-            """
-            SELECT COALESCE(SUM(
-                CASE kind
-                    WHEN 'borrow' THEN amount
-                    WHEN 'repay' THEN -amount
-                END
-            ), 0) AS debt
-            FROM debt_transactions
-            WHERE debt_id = ?
-            """,
+            f"SELECT {DEBT_CENTS_EXPR} AS debt FROM debt_transactions WHERE debt_id = ?",
             (debt_id,),
         ).fetchone()
     return int(row["debt"])
@@ -190,7 +203,7 @@ def _serialize_debt_item(conn: sqlite3.Connection, debt_row: sqlite3.Row, limit:
 
 
 def get_summary(limit: int = 50) -> dict:
-    with _connect() as conn:
+    with _connection() as conn:
         balance = _balance_cents(conn)
         debt = _debt_cents(conn)
         rows = conn.execute(
@@ -224,21 +237,28 @@ def add_transaction(kind: str, amount_cents: int, note: str = "") -> dict:
     note = (note or "").strip()
     created_at = _utc_now()
 
-    with _connect() as conn:
+    with _connection() as conn:
         if kind == KIND_EXPENSE:
-            balance = _balance_cents(conn)
-            if amount_cents > balance:
+            cur = conn.execute(
+                f"""
+                INSERT INTO transactions (kind, amount, note, created_at)
+                SELECT 'expense', ?, ?, ?
+                WHERE ? <= (SELECT {BALANCE_CENTS_EXPR} FROM transactions)
+                """,
+                (amount_cents, note, created_at, amount_cents),
+            )
+            if cur.rowcount != 1:
                 raise ValueError("сумма больше доступного баланса")
-
-        cur = conn.execute(
-            """
-            INSERT INTO transactions (kind, amount, note, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (kind, amount_cents, note, created_at),
-        )
-        conn.commit()
-        tx_id = cur.lastrowid
+            tx_id = cur.lastrowid
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO transactions (kind, amount, note, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (kind, amount_cents, note, created_at),
+            )
+            tx_id = cur.lastrowid
 
     return {
         "id": tx_id,
@@ -260,18 +280,23 @@ def create_debt(name: str, initial_amount_cents: int = 0) -> dict:
 
     created_at = _utc_now()
 
-    with _connect() as conn:
-        cur = conn.execute(
-            "INSERT INTO debts (name, created_at) VALUES (?, ?)",
-            (name, created_at),
-        )
-        debt_id = cur.lastrowid
-        conn.commit()
+    with _connection() as conn:
+        with _transaction(conn):
+            cur = conn.execute(
+                "INSERT INTO debts (name, created_at) VALUES (?, ?)",
+                (name, created_at),
+            )
+            debt_id = cur.lastrowid
 
-    if initial_amount_cents > 0:
-        add_debt(debt_id, DEBT_BORROW, initial_amount_cents, "")
+            if initial_amount_cents > 0:
+                conn.execute(
+                    """
+                    INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
+                    VALUES (?, ?, ?, ?, NULL, ?)
+                    """,
+                    (DEBT_BORROW, initial_amount_cents, "", created_at, debt_id),
+                )
 
-    with _connect() as conn:
         debt_row = _get_debt_row(conn, debt_id)
         return _serialize_debt_item(conn, debt_row, 50)
 
@@ -285,42 +310,50 @@ def add_debt(debt_id: int, kind: str, amount_cents: int, note: str = "") -> dict
     note = (note or "").strip()
     created_at = _utc_now()
 
-    with _connect() as conn:
-        debt_row = _get_debt_row(conn, debt_id)
-        linked_tx_id = None
+    with _connection() as conn:
+        with _transaction(conn):
+            debt_row = _get_debt_row(conn, debt_id)
 
-        if kind == DEBT_REPAY:
-            debt_balance = _debt_cents(conn, debt_id)
-            if amount_cents > debt_balance:
-                raise ValueError("сумма больше текущего долга")
+            if kind == DEBT_BORROW:
+                cur = conn.execute(
+                    """
+                    INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
+                    VALUES (?, ?, ?, ?, NULL, ?)
+                    """,
+                    (kind, amount_cents, note, created_at, debt_id),
+                )
+                debt_tx_id = cur.lastrowid
+                linked_tx_id = None
+            else:
+                debt_balance = _debt_cents(conn, debt_id)
+                if amount_cents > debt_balance:
+                    raise ValueError("сумма больше текущего долга")
 
-            balance = _balance_cents(conn)
-            if amount_cents > balance:
-                raise ValueError("сумма больше доступного баланса")
+                balance = _balance_cents(conn)
+                if amount_cents > balance:
+                    raise ValueError("сумма больше доступного баланса")
 
-            expense_note = note if note else f"Вернул долг: {debt_row['name']}"
-            if note and not note.lower().startswith("вернул"):
-                expense_note = f"Вернул долг ({debt_row['name']}): {note}"
+                expense_note = note if note else f"Вернул долг: {debt_row['name']}"
+                if note and not note.lower().startswith("вернул"):
+                    expense_note = f"Вернул долг ({debt_row['name']}): {note}"
 
-            cur_tx = conn.execute(
-                """
-                INSERT INTO transactions (kind, amount, note, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (KIND_EXPENSE, amount_cents, expense_note, created_at),
-            )
-            linked_tx_id = cur_tx.lastrowid
+                cur_tx = conn.execute(
+                    """
+                    INSERT INTO transactions (kind, amount, note, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (KIND_EXPENSE, amount_cents, expense_note, created_at),
+                )
+                linked_tx_id = cur_tx.lastrowid
 
-        cur = conn.execute(
-            """
-            INSERT INTO debt_transactions
-                (kind, amount, note, created_at, linked_tx_id, debt_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (kind, amount_cents, note, created_at, linked_tx_id, debt_id),
-        )
-        conn.commit()
-        debt_tx_id = cur.lastrowid
+                cur = conn.execute(
+                    """
+                    INSERT INTO debt_transactions (kind, amount, note, created_at, linked_tx_id, debt_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (kind, amount_cents, note, created_at, linked_tx_id, debt_id),
+                )
+                debt_tx_id = cur.lastrowid
 
     return {
         "id": debt_tx_id,
@@ -335,32 +368,30 @@ def add_debt(debt_id: int, kind: str, amount_cents: int, note: str = "") -> dict
 
 def clear_transactions() -> dict:
     """Remove income/expense history. Available balance becomes 0."""
-    with _connect() as conn:
-        conn.execute("UPDATE debt_transactions SET linked_tx_id = NULL")
-        conn.execute("DELETE FROM transactions")
-        conn.commit()
+    with _connection() as conn:
+        with _transaction(conn):
+            conn.execute("UPDATE debt_transactions SET linked_tx_id = NULL")
+            conn.execute("DELETE FROM transactions")
     return get_summary()
 
 
 def clear_debt_transactions(debt_id: int | None = None) -> dict:
     """Remove debt history. If debt_id is set, remove only that debt item."""
-    with _connect() as conn:
-        if debt_id is not None:
-            _get_debt_row(conn, debt_id)
-            linked = conn.execute(
-                "SELECT linked_tx_id FROM debt_transactions WHERE debt_id = ? AND linked_tx_id IS NOT NULL",
-                (debt_id,),
-            ).fetchall()
-            for row in linked:
+    with _connection() as conn:
+        with _transaction(conn):
+            if debt_id is not None:
+                _get_debt_row(conn, debt_id)
                 conn.execute(
-                    "UPDATE debt_transactions SET linked_tx_id = NULL WHERE linked_tx_id = ?",
-                    (row["linked_tx_id"],),
+                    """
+                    UPDATE debt_transactions SET linked_tx_id = NULL
+                    WHERE debt_id = ? AND linked_tx_id IS NOT NULL
+                    """,
+                    (debt_id,),
                 )
-            conn.execute("DELETE FROM debt_transactions WHERE debt_id = ?", (debt_id,))
-            conn.execute("DELETE FROM debts WHERE id = ?", (debt_id,))
-        else:
-            conn.execute("UPDATE debt_transactions SET linked_tx_id = NULL")
-            conn.execute("DELETE FROM debt_transactions")
-            conn.execute("DELETE FROM debts")
-        conn.commit()
+                conn.execute("DELETE FROM debt_transactions WHERE debt_id = ?", (debt_id,))
+                conn.execute("DELETE FROM debts WHERE id = ?", (debt_id,))
+            else:
+                conn.execute("UPDATE debt_transactions SET linked_tx_id = NULL")
+                conn.execute("DELETE FROM debt_transactions")
+                conn.execute("DELETE FROM debts")
     return get_summary()
