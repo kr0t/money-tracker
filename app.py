@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import db
 
 ROOT = Path(__file__).resolve().parent
-STATIC_DIR = ROOT / "static"
+STATIC_DIR = ROOT / "public"
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8080"))
 
@@ -342,6 +342,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/transactions/clear":
                 self._handle_clear(db.clear_transactions)
                 return
+            if path == "/api/transactions/delete":
+                self._handle_delete_transaction()
+                return
             if path == "/api/debt/clear":
                 self._handle_clear_debt()
                 return
@@ -411,15 +414,39 @@ class Handler(BaseHTTPRequestHandler):
             extra_headers={"Set-Cookie": self._logout_cookie_header()},
         )
 
-    def _read_amount_and_note(self) -> tuple[int, str]:
-        data = self._read_json()
-        amount_cents = _parse_amount_to_cents(data.get("amount"))
-        note = data.get("note", "")
-        if note is None:
-            note = ""
-        if not isinstance(note, str):
-            raise ValueError("note must be a string")
-        return amount_cents, note
+    def _handle_add(self, kind: str) -> None:
+        try:
+            data = self._read_json()
+            amount_cents = _parse_amount_to_cents(data.get("amount"))
+            note = data.get("note", "")
+            if note is None:
+                note = ""
+            if not isinstance(note, str):
+                raise ValueError("note must be a string")
+            request_id = data.get("request_id")
+            if not isinstance(request_id, str):
+                request_id = None
+            result = db.add_transaction(kind, amount_cents, note, request_id)
+            summary = db.get_summary()
+            status = 200 if result["duplicate"] else 201
+            self._send_json(
+                status,
+                {
+                    "transaction": result["transaction"],
+                    "summary": summary,
+                    "duplicate": result["duplicate"],
+                },
+            )
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_delete_transaction(self) -> None:
+        try:
+            data = self._read_json()
+            summary = db.delete_transaction(data.get("id"))
+            self._send_json(200, {"summary": summary})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
 
     def _read_debt_id(self, data: dict) -> int:
         raw = data.get("debt_id")
@@ -430,15 +457,6 @@ class Handler(BaseHTTPRequestHandler):
         if raw <= 0:
             raise ValueError("debt_id must be positive")
         return raw
-
-    def _handle_add(self, kind: str) -> None:
-        try:
-            amount_cents, note = self._read_amount_and_note()
-            tx = db.add_transaction(kind, amount_cents, note)
-            summary = db.get_summary()
-            self._send_json(201, {"transaction": tx, "summary": summary})
-        except ValueError as exc:
-            self._send_json(400, {"error": str(exc)})
 
     def _handle_debt(self, kind: str) -> None:
         try:

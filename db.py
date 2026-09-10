@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -28,6 +28,8 @@ COALESCE(SUM(CASE kind
     WHEN 'borrow' THEN amount
     WHEN 'repay' THEN -amount
 END), 0)"""
+
+PROCESSED_REQUESTS_RETENTION = timedelta(hours=24)
 
 
 def _connect() -> sqlite3.Connection:
@@ -108,6 +110,14 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_requests (
+                request_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
 
         debt_tx_cols = _table_columns(conn, "debt_transactions")
         if "debt_id" not in debt_tx_cols:
@@ -166,6 +176,7 @@ def _serialize_tx(row: sqlite3.Row) -> dict:
         "amount": row["amount"] / 100,
         "note": row["note"],
         "created_at": row["created_at"],
+        "linked_to_debt": bool(row["linked_to_debt"]),
     }
 
 
@@ -208,9 +219,12 @@ def get_summary(limit: int = 50) -> dict:
         debt = _debt_cents(conn)
         rows = conn.execute(
             """
-            SELECT id, kind, amount, note, created_at
-            FROM transactions
-            ORDER BY id DESC
+            SELECT t.id, t.kind, t.amount, t.note, t.created_at,
+                   EXISTS(
+                       SELECT 1 FROM debt_transactions d WHERE d.linked_tx_id = t.id
+                   ) AS linked_to_debt
+            FROM transactions t
+            ORDER BY t.id DESC
             LIMIT ?
             """,
             (limit,),
@@ -228,45 +242,78 @@ def get_summary(limit: int = 50) -> dict:
     }
 
 
-def add_transaction(kind: str, amount_cents: int, note: str = "") -> dict:
+def add_transaction(kind: str, amount_cents: int, note: str = "", request_id: str | None = None) -> dict:
     if kind not in (KIND_INCOME, KIND_EXPENSE):
         raise ValueError("kind must be 'income' or 'expense'")
     if amount_cents <= 0:
         raise ValueError("amount must be positive")
 
     note = (note or "").strip()
+    clean_request_id = (
+        request_id.strip()[:80]
+        if isinstance(request_id, str) and request_id.strip()
+        else None
+    )
     created_at = _utc_now()
 
     with _connection() as conn:
-        if kind == KIND_EXPENSE:
-            cur = conn.execute(
-                f"""
-                INSERT INTO transactions (kind, amount, note, created_at)
-                SELECT 'expense', ?, ?, ?
-                WHERE ? <= (SELECT {BALANCE_CENTS_EXPR} FROM transactions)
-                """,
-                (amount_cents, note, created_at, amount_cents),
-            )
-            if cur.rowcount != 1:
-                raise ValueError("сумма больше доступного баланса")
-            tx_id = cur.lastrowid
-        else:
-            cur = conn.execute(
-                """
-                INSERT INTO transactions (kind, amount, note, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (kind, amount_cents, note, created_at),
-            )
-            tx_id = cur.lastrowid
+        with _transaction(conn):
+            if clean_request_id:
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO processed_requests (request_id, created_at) VALUES (?, ?)",
+                    (clean_request_id, created_at),
+                )
+                cutoff = (datetime.now(timezone.utc) - PROCESSED_REQUESTS_RETENTION).isoformat()
+                conn.execute("DELETE FROM processed_requests WHERE created_at < ?", (cutoff,))
+                if cur.rowcount != 1:
+                    return {"duplicate": True, "transaction": None}
+
+            if kind == KIND_EXPENSE:
+                cur = conn.execute(
+                    f"""
+                    INSERT INTO transactions (kind, amount, note, created_at)
+                    SELECT 'expense', ?, ?, ?
+                    WHERE ? <= (SELECT {BALANCE_CENTS_EXPR} FROM transactions)
+                    """,
+                    (amount_cents, note, created_at, amount_cents),
+                )
+                if cur.rowcount != 1:
+                    raise ValueError("сумма больше доступного баланса")
+                tx_id = cur.lastrowid
+            else:
+                cur = conn.execute(
+                    """
+                    INSERT INTO transactions (kind, amount, note, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (kind, amount_cents, note, created_at),
+                )
+                tx_id = cur.lastrowid
 
     return {
-        "id": tx_id,
-        "kind": kind,
-        "amount": amount_cents / 100,
-        "note": note,
-        "created_at": created_at,
+        "duplicate": False,
+        "transaction": {
+            "id": tx_id,
+            "kind": kind,
+            "amount": amount_cents / 100,
+            "note": note,
+            "created_at": created_at,
+        },
     }
+
+
+def delete_transaction(tx_id) -> dict:
+    if isinstance(tx_id, bool) or not isinstance(tx_id, int) or tx_id <= 0:
+        raise ValueError("некорректный id операции")
+
+    with _connection() as conn:
+        with _transaction(conn):
+            conn.execute("DELETE FROM debt_transactions WHERE linked_tx_id = ?", (tx_id,))
+            cur = conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+            if cur.rowcount != 1:
+                raise ValueError("операция не найдена")
+
+    return get_summary()
 
 
 def create_debt(name: str, initial_amount_cents: int = 0) -> dict:

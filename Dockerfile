@@ -3,7 +3,7 @@ FROM python:3.14-slim-bookworm
 WORKDIR /app
 
 COPY app.py db.py ./
-COPY static/ static/
+COPY public/ public/
 
 ENV HOST=0.0.0.0
 ENV PORT=8080

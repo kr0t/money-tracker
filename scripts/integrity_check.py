@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Concurrency integrity checks for a running money-tracker instance.
+"""API integrity checks for a running money-tracker instance.
+
+Covers concurrency (overdraft, repay races), linked-records consistency,
+undo (/api/transactions/delete) and request_id idempotency.
 
 WIPES all transactions and debts. Point BASE_URL at a disposable instance
 (fresh local python server or a wrangler pages dev copy) and confirm with
@@ -213,11 +216,134 @@ def test_consistency(debt_id):
     )
 
 
+def test_undo():
+    print("\n[4] undo via /api/transactions/delete")
+    reset_state()
+    status, _, _, _ = request("POST", "/api/income", {"amount": "100.00", "note": "seed"})
+    check("seed income 100.00 accepted", status == 201, "(got HTTP %s)" % status)
+    status, _, _, _ = request("POST", "/api/expense", {"amount": "30.00", "note": "plain"})
+    check("plain expense accepted", status == 201, "(got HTTP %s)" % status)
+
+    status, summary, _, _ = request("GET", "/api/summary")
+    expense = next(
+        (
+            t
+            for t in summary["transactions"]
+            if t["kind"] == "expense" and t["note"] == "plain"
+        ),
+        None,
+    )
+    check("plain expense found in history", expense is not None)
+    check(
+        "linked_to_debt is false",
+        expense is not None and expense["linked_to_debt"] is False,
+    )
+
+    status, _, _, _ = request("POST", "/api/transactions/delete", {"id": expense["id"]})
+    check("undo returns 200", status == 200, "(got HTTP %s)" % status)
+
+    status, summary, _, _ = request("GET", "/api/summary")
+    check(
+        "balance restored to 100.00",
+        summary and summary["balance"] == 100.0,
+        "(got %s)" % (summary and summary["balance"]),
+    )
+
+    status, _, _, _ = request("POST", "/api/transactions/delete", {"id": expense["id"]})
+    check("repeat undo rejected 400", status == 400, "(got HTTP %s)" % status)
+
+    status, payload, _, _ = request(
+        "POST", "/api/debts", {"name": "Undo Debt", "amount": "50.00"}
+    )
+    check("debt with initial 50.00 created", status == 201, "(got HTTP %s)" % status)
+    debt_id = payload["debt"]["id"] if payload and payload.get("debt") else None
+
+    status, _, _, _ = request("POST", "/api/debt/repay", {"debt_id": debt_id, "amount": "50.00"})
+    check("repay 50.00 accepted", status == 201, "(got HTTP %s)" % status)
+
+    status, summary, _, _ = request("GET", "/api/summary")
+    repay_expense = next(
+        (
+            t
+            for t in summary["transactions"]
+            if t["kind"] == "expense" and t.get("linked_to_debt")
+        ),
+        None,
+    )
+    check("linked repay expense found", repay_expense is not None)
+
+    status, _, _, _ = request(
+        "POST", "/api/transactions/delete", {"id": repay_expense["id"]}
+    )
+    check("linked undo returns 200", status == 200, "(got HTTP %s)" % status)
+
+    status, summary, _, _ = request("GET", "/api/summary")
+    check(
+        "balance restored to 100.00 after linked undo",
+        summary and summary["balance"] == 100.0,
+        "(got %s)" % (summary and summary["balance"]),
+    )
+    debt = next((d for d in summary["debts"] if d["id"] == debt_id), None)
+    check(
+        "debt restored to 50.00",
+        debt is not None and debt["balance"] == 50.0,
+        "(got %s)" % (debt and debt["balance"]),
+    )
+    repays = [t for t in debt["transactions"] if t["kind"] == "repay"]
+    check("repay record removed from debt history", repays == [], "(got %d)" % len(repays))
+
+
+def test_idempotency():
+    print("\n[5] request_id idempotency")
+    reset_state()
+
+    body = {"amount": "10.00", "note": "idem", "request_id": "idem-fixed-income-1"}
+    status, payload, _, _ = request("POST", "/api/income", body)
+    check("first submit accepted 201", status == 201, "(got HTTP %s)" % status)
+    check("first submit not duplicate", payload and payload.get("duplicate") is False)
+
+    status, payload, _, _ = request("POST", "/api/income", body)
+    check("retry returns 200", status == 200, "(got HTTP %s)" % status)
+    check("retry flagged duplicate", payload and payload.get("duplicate") is True)
+    check("retry transaction is null", payload and payload.get("transaction") is None)
+
+    status, summary, _, _ = request("GET", "/api/summary")
+    check(
+        "balance incremented once",
+        summary and summary["balance"] == 10.0,
+        "(got %s)" % (summary and summary["balance"]),
+    )
+
+    status, _, _, _ = request(
+        "POST",
+        "/api/expense",
+        {"amount": "999.00", "note": "idem2", "request_id": "idem-fixed-expense-2"},
+    )
+    check("oversized expense rejected 400", status == 400, "(got HTTP %s)" % status)
+
+    status, payload, _, _ = request(
+        "POST",
+        "/api/expense",
+        {"amount": "5.00", "note": "idem2", "request_id": "idem-fixed-expense-2"},
+    )
+    check("same request_id retry accepted 201", status == 201, "(got HTTP %s)" % status)
+    check("retry not duplicate", payload and payload.get("duplicate") is False)
+
+    status, summary, _, _ = request("GET", "/api/summary")
+    check(
+        "balance consistent after retry",
+        summary and summary["balance"] == 5.0,
+        "(got %s)" % (summary and summary["balance"]),
+    )
+
+
 def main():
     login()
     test_expense_overdraft()
     debt_id = test_repay_race()
     test_consistency(debt_id)
+    test_undo()
+    test_idempotency()
     print("\npassed: %d, failed: %d" % (PASSED, FAILED))
     sys.exit(0 if FAILED == 0 else 1)
 

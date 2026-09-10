@@ -21,6 +21,8 @@ const DEBT_CENTS_EXPR = `COALESCE(SUM(
   END
 ), 0)`;
 
+const PROCESSED_REQUESTS_RETENTION_MS = 24 * 60 * 60 * 1000;
+
 export function jsonResponse(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -266,6 +268,10 @@ export async function addTransaction(db, kind, amountCents, note = "", requestId
         "INSERT OR IGNORE INTO processed_requests (request_id, created_at) VALUES (?, ?)"
       )
       .bind(cleanRequestId, createdAt)
+      .run();
+    await db
+      .prepare("DELETE FROM processed_requests WHERE created_at < ?")
+      .bind(new Date(Date.now() - PROCESSED_REQUESTS_RETENTION_MS).toISOString())
       .run();
     if (!reserved.meta?.changes) {
       return { duplicate: true, transaction: null };
