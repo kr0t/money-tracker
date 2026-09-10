@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      AUTH_PIN: "1234"
+      AUTH_SECRET: "ci-not-a-secret-0123456789abcdef0123456789abcdef"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax checks
+        run: |
+          python3 -m py_compile app.py db.py scripts/integrity_check.py
+          bash -n scripts/auth_smoke.sh
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -p "test_*.py" -v
+      - name: End-to-end checks
+        run: |
+          DATA_DIR="$(mktemp -d)"
+          AUTH_LOCKOUT_WINDOW_SECONDS=5 HOST=127.0.0.1 PORT=8081 DATA_DIR="$DATA_DIR" \
+            python3 app.py > "$DATA_DIR/server.log" 2>&1 &
+          SERVER_PID=$!
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8081/api/auth/check > /dev/null 2>&1 && break
+            sleep 1
+          done
+          BASE_URL=http://127.0.0.1:8081 ./scripts/auth_smoke.sh
+          BASE_URL=http://127.0.0.1:8081 CONFIRM_DESTRUCTIVE=1 python3 scripts/integrity_check.py
+          kill "$SERVER_PID"
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    env:
+      AUTH_PIN: "1234"
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Syntax checks
+        run: |
+          find functions -name '*.js' -print0 | xargs -0 -n1 node --check
+          bash -n scripts/auth_smoke.sh
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end checks
+        run: |
+          printf 'AUTH_PIN="1234"\nAUTH_SECRET="ci-not-a-secret-0123456789abcdef0123456789abcdef"\nAUTH_LOCKOUT_WINDOW_SECONDS="5"\n' > .dev.vars
+          npx wrangler pages dev public --d1=DB=money-tracker-db --port 8788 > wrangler.log 2>&1 &
+          WRANGLER_PID=$!
+          for _ in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8788/api/auth/check > /dev/null 2>&1 && break
+            sleep 1
+          done
+          BASE_URL=http://127.0.0.1:8788 ./scripts/auth_smoke.sh
+          BASE_URL=http://127.0.0.1:8788 CONFIRM_DESTRUCTIVE=1 python3 scripts/integrity_check.py
+          kill "$WRANGLER_PID"

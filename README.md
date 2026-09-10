@@ -1,5 +1,7 @@
 # Доступные деньги (Money Tracker)
 
+[![CI](https://github.com/kr0t/money-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/kr0t/money-tracker/actions/workflows/ci.yml)
+
 Трекер доступных денег и долгов. Работает на **Cloudflare Pages + Pages Functions + Cloudflare D1 (serverless SQLite)**, а также поддерживает локальный запуск.
 
 ## Архитектура
@@ -44,6 +46,27 @@ AUTH_PIN="ваш_пин" AUTH_SECRET="$(openssl rand -hex 32)" python3.14 app.py
 Приложение откроется на [http://127.0.0.1:8080](http://127.0.0.1:8080). Данные сохраняются в `data/ledger.db`.
 
 Опционально: `AUTH_MAX_ATTEMPTS` (по умолчанию 5) и `AUTH_LOCKOUT_WINDOW_SECONDS` (по умолчанию 900) — параметры блокировки после неудачных попыток входа.
+
+---
+
+## Тесты
+
+Юнит-тесты без зависимостей (stdlib):
+
+```bash
+python3 -m unittest discover -s tests -p "test_*.py" -v   # Python-логика: парсинг сумм, токены, БД
+npm test                                                  # JS-логика (node:test): парсинг сумм, auth
+```
+
+E2E-проверки против запущенного инстанса (затирают данные — только одноразовые инстансы):
+
+```bash
+BASE_URL=http://127.0.0.1:8788 AUTH_PIN=… ./scripts/auth_smoke.sh
+BASE_URL=http://127.0.0.1:8788 AUTH_PIN=… CONFIRM_DESTRUCTIVE=1 python3 scripts/integrity_check.py
+```
+
+CI (`.github/workflows/ci.yml`) на каждый push/PR запускает оба набора тестов
+и обе e2e-проверки против обоих бэкендов (Python-сервер и wrangler pages dev с локальной D1).
 
 ---
 

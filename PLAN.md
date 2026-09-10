@@ -1,55 +1,48 @@
-# PLAN.md — п.6 паритет бэкендов + п.7 единый фронтенд + п.9 чистка processed_requests
+# PLAN.md — п.10: тесты и CI
 
-Решения: паритет (оба бэкенда остаются, Docker-деплой зависит от Python); п.7 и п.9
-в том же блоке; проверка — расширение `scripts/integrity_check.py`.
+Решения: ноль новых зависимостей — stdlib `unittest` (Python) и встроенный
+`node:test` (Node 18+). CI — GitHub Actions, два job'а (Python-стек и
+Cloudflare-стек), каждый гоняет юнит- и e2e-проверки.
 
-## A. Python-паритет (п.6) — `db.py`, `app.py`
+## A. Юнит-тесты
 
-- [x] `init_db`: добавить `CREATE TABLE IF NOT EXISTS processed_requests`
-      (таблица уже есть в `schema.sql`/миграции 0002 — новых миграций не нужно)
-- [x] `add_transaction(..., request_id)`: резерв ключа `INSERT OR IGNORE` → дубликат
-      возвращает `{duplicate: true, transaction: None}`; весь блок в одной транзакции
-      `BEGIN IMMEDIATE` — отказ по балансу откатывает и резерв (компенсация не нужна,
-      строгее JS-варианта); условный INSERT расхода из п.5 сохраняется
-- [x] `app.py _handle_add`: принимать `request_id` (не-строка → игнор, как в JS),
-      отвечать `200 {transaction: null, summary, duplicate: true}` на дубликат /
-      `201 {transaction, summary, duplicate: false}`
-- [x] `get_summary`/`_serialize_tx`: поле `linked_to_debt` через
-      `EXISTS(SELECT 1 FROM debt_transactions WHERE linked_tx_id = t.id)`
-- [x] Новый `db.delete_transaction(tx_id)`: в `_transaction` — удаление связанной
-      записи долга + операции; `rowcount = 0` → «операция не найдена»
-- [x] Новый роут `POST /api/transactions/delete` в `app.py` → `{summary}`
+- [x] `tests/test_app.py` (unittest): `_parse_amount_to_cents` (валид/невалид,
+      запятая, пробелы, bool), `_get_auth_config` (все правила fail-closed,
+      снятие кавычек), токены (`_create_auth_token`/`_verify_auth_token`:
+      roundtrip, чужой секрет, подделка подписи/payload, истёкший exp, мусор)
+- [x] `tests/test_db.py` (unittest, `DATA_DIR` → temp до импорта `db`):
+      баланс/овердрафт, точное совпадение с балансом, дубликат `request_id`,
+      освобождение ключа после отказа, `create_debt` с начальной суммой,
+      repay (списание + linked_tx_id), отказы repay, `delete_transaction`
+      (обычный и связанный с долгом), флаг `linked_to_debt`, чистка
+      `processed_requests` старше 24 ч
+- [x] `tests/amount.test.js` (node:test): `parseAmountToCents` — зеркально Python
+- [x] `tests/auth.test.js` (node:test): `getAuthConfig` (env-объекты, все правила),
+      токены roundtrip/подделка/чужой секрет/fail-closed без конфига/истёкший
+- [x] `package.json`: `"test": "node --test tests/"`
 
-## B. Чистка processed_requests (п.9) — `_db.js` + `db.py`
+## B. CI — `.github/workflows/ci.yml`
 
-- [x] Оппортунистический `DELETE` строк старше 24 ч сразу после резерва ключа
-      (в обеих реализациях, по образцу `login_attempts`)
+- [x] Триггеры: push в `main` + все pull_request
+- [x] Job `python` (ubuntu, setup-python): py_compile + bash -n → unittest →
+      старт `app.py` (герметичный `DATA_DIR`, окно lockout 5 c) → `auth_smoke.sh`
+      + `integrity_check.py`
+- [x] Job `cloudflare` (ubuntu, setup-node 22, `npm ci`, кэш npm):
+      node --check всех functions → `npm test` → генерация `.dev.vars` с
+      тестовыми значениями → `wrangler pages dev` (локальная D1) →
+      `auth_smoke.sh` + `integrity_check.py`
 
-## C. Единый фронтенд (п.7)
+## C. Документация
 
-- [x] Удалить `static/`; `app.py`: `STATIC_DIR = ROOT / "public"`;
-      `Dockerfile`: `COPY public/ public/` (`.dockerignore` не блокирует)
-- [x] `public/_headers` остаётся (для Pages важен, Python-серверу безвреден);
-      кэш-бастер `?v=N` инкрементится в одном месте
+- [x] README: бейдж CI, раздел «Тесты» (команды юнит/e2e, что гоняет CI)
 
-## D. Верификация — расширение `scripts/integrity_check.py`
+## D. Верификация локально
 
-- [x] Тест 4 (undo): расход с `linked_to_debt=False` → delete → баланс восстановлен,
-      повтор → 400; расход возврата долга с `linked_to_debt=True` → delete →
-      долг восстановлен, repay-запись исчезла из истории долга
-- [x] Тест 5 (идемпотентность): один `request_id` дважды → 201 + 200 `duplicate:true`,
-      баланс вырос один раз; отклонённый expense (> баланса) → 400 → повтор тем же
-      `request_id` с корректной суммой → 201 (ключ не сгорел)
-- [x] Прогоны против обоих бэкендов (герметичные инстансы): `integrity_check.py` +
-      `auth_smoke.sh`; проверка отдачи `/` и `/app.js` из `public/`;
-      опционально `docker build`
-
-## Порядок, эффекты, ограничения
-
-A → B → C → D. Миграций нет. Осознанные изменения: раскладка Docker-образа
-(`static/` → `public/`), Python-ответ income/expense получает поле `duplicate`
-(фронтенд совместим: `res.ok` пропускает 200).
+- [x] `python3 -m unittest discover -s tests -p "test_*.py" -v` — все зелёные
+- [x] `npm test` — все зелёные
+- [x] e2e против обоих бэкендов не регрессировали (пattern из прошлых блоков)
+- [x] YAML workflow валиден (парсер)
 
 ## Вне скоупа
 
-п.10 (тесты/CI), N+1 в `getSummary`.
+Покрытие фронтенда (app.js) e2e-тестами браузера; линтеры (в репо не настроены).
