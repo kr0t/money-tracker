@@ -14,12 +14,14 @@ export async function onRequestPost(context) {
     const amountCents = parseAmountToCents(data.amount);
     const note = typeof data.note === "string" ? data.note : "";
     const requestId = typeof data.request_id === "string" ? data.request_id : null;
+    const categoryId = data.category_id === undefined || data.category_id === null ? null : data.category_id;
     const result = await addTransaction(
       context.env.DB,
       KIND_EXPENSE,
       amountCents,
       note,
-      requestId
+      requestId,
+      categoryId
     );
     const summary = await getSummary(context.env.DB);
     return jsonResponse(

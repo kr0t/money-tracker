@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#1a2e24" />
+    <title>Аналитика расходов</title>
+    <link rel="stylesheet" href="/style.css?v=8" />
+  </head>
+  <body>
+    <main class="app analytics-page">
+      <header class="hero">
+        <div class="analytics-top"><a class="analytics-link" href="/">Назад</a><button id="logout-btn" class="logout-btn" type="button">Выйти</button></div>
+        <p class="brand">Аналитика</p>
+        <p class="hint">Расходы по категориям</p>
+      </header>
+      <section class="analytics-card" aria-labelledby="period-title">
+        <div class="month-switcher"><button class="icon-btn" id="prev-month" type="button" aria-label="Предыдущий месяц">‹</button><h1 id="period-title"></h1><button class="icon-btn" id="next-month" type="button" aria-label="Следующий месяц">›</button></div>
+        <p class="balance" id="analytics-total">—</p>
+        <div class="chart" id="chart" role="img" aria-label="Распределение расходов по категориям"></div>
+        <ul class="analytics-list" id="category-list"></ul><p class="empty" id="analytics-empty" hidden>В этом месяце нет расходов</p>
+      </section>
+      <section class="analytics-card"><h2>Категории</h2><form class="category-manager" id="category-form"><input id="category-name" maxlength="50" placeholder="Новая категория" required /><button class="submit" type="submit">Добавить категорию</button></form><ul class="analytics-list" id="category-manager-list"></ul></section>
+      <section class="analytics-card"><h2>Траты месяца</h2><p class="hint">Назначайте категории старым операциям прямо здесь.</p><ul class="analytics-list" id="transaction-list"></ul></section>
+    </main>
+    <script src="/analytics.js?v=1"></script>
+  </body>
+</html>

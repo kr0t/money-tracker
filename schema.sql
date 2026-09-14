@@ -5,6 +5,14 @@ CREATE TABLE IF NOT EXISTS transactions (
     kind TEXT NOT NULL CHECK (kind IN ('income', 'expense')),
     amount INTEGER NOT NULL CHECK (amount > 0),
     note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    category_id INTEGER REFERENCES categories(id)
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
     created_at TEXT NOT NULL
 );
 

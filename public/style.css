@@ -125,6 +125,21 @@ body {
   -webkit-backdrop-filter: blur(4px);
 }
 
+.hero-actions { position: absolute; right: 0; display: flex; align-items: center; gap: 0.45rem; }
+.hero-actions .logout-btn { position: static; transform: none; }
+.analytics-link { color: #f5f1e8; font-size: 0.82rem; text-decoration: none; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; padding: .35rem .7rem; }
+.analytics-page .hero { text-align: left; }
+.analytics-top { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.analytics-card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.25rem; margin-top: 1rem; }
+.month-switcher { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.icon-btn { width: 2.25rem; height: 2.25rem; border: 1px solid #c8c2b7; background: transparent; border-radius: 6px; font-size: 1.2rem; cursor: pointer; }
+.chart { width: min(13rem, 70vw); aspect-ratio: 1; border-radius: 50%; margin: 1.25rem auto; background: #d8d4cc; }
+.analytics-list { list-style: none; padding: 0; margin: 0; }
+.analytics-list li { display: grid; grid-template-columns: 1fr auto; gap: .25rem .75rem; padding: .7rem 0; border-top: 1px solid #ddd7cb; }
+.analytics-list small { color: var(--muted); }
+.category-manager { display: grid; gap: .5rem; }
+.transaction-category { width: 100%; margin-top: .35rem; }
+
 .logout-btn:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.35);

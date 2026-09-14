@@ -18,6 +18,8 @@
   const form = document.getElementById("tx-form");
   const amountInput = document.getElementById("amount");
   const noteInput = document.getElementById("note");
+  const categoryInput = document.getElementById("category");
+  const categoryField = document.getElementById("category-field");
   const errorEl = document.getElementById("form-error");
   const submitBtn = document.getElementById("submit-btn");
   const tabs = document.querySelectorAll("[data-kind]");
@@ -169,6 +171,17 @@
     });
     submitBtn.classList.toggle("is-expense", kind === "expense");
     submitBtn.textContent = kind === "income" ? "Зачислить" : "Списать";
+    categoryField.hidden = kind !== "expense";
+  }
+
+  async function loadCategories() {
+    const res = await apiFetch("/api/categories");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Не удалось загрузить категории");
+    categoryInput.innerHTML = '<option value="">Без категории</option>';
+    for (const category of data.categories.filter((item) => !item.is_archived)) {
+      const option = document.createElement("option"); option.value = category.id; option.textContent = category.name; categoryInput.append(option);
+    }
   }
 
   function getDebtKind(debtId) {
@@ -531,7 +544,7 @@
       errorEl,
       submitBtn,
       endpoint: kind === "income" ? "/api/income" : "/api/expense",
-      payload: {},
+      payload: kind === "expense" && categoryInput.value ? { category_id: Number(categoryInput.value) } : {},
     });
   });
 
@@ -871,7 +884,7 @@
   bindCollapsible(document.getElementById("debts-toggle"), document.getElementById("debts-body"));
   bindCollapsible(document.getElementById("tx-toggle"), document.getElementById("tx-body"));
 
-  loadSummary().catch((err) => {
+  Promise.all([loadCategories(), loadSummary()]).catch((err) => {
     if (err.message === "Требуется авторизация") {
       setAuthError("Введите PIN-код или пароль для входа");
     } else {

@@ -98,6 +98,15 @@ export async function ensureSchema(db) {
         kind TEXT NOT NULL CHECK (kind IN ('income', 'expense')),
         amount INTEGER NOT NULL CHECK (amount > 0),
         note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        category_id INTEGER REFERENCES categories(id)
+      )
+    `),
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
         created_at TEXT NOT NULL
       )
     `),
@@ -133,6 +142,10 @@ export async function ensureSchema(db) {
       )
     `),
   ]);
+  const columns = await db.prepare("PRAGMA table_info(transactions)").all();
+  if (!(columns.results || []).some((column) => column.name === "category_id")) {
+    await db.prepare("ALTER TABLE transactions ADD COLUMN category_id INTEGER REFERENCES categories(id)").run();
+  }
   schemaInitialized = true;
 }
 
@@ -180,6 +193,7 @@ function serializeTx(row) {
     note: row.note,
     created_at: row.created_at,
     linked_to_debt: Boolean(row.linked_to_debt),
+    category_id: row.category_id,
   };
 }
 
@@ -202,7 +216,7 @@ export async function getSummary(db, limit = 50) {
 
   const { results: txRows } = await db
     .prepare(
-      `SELECT t.id, t.kind, t.amount, t.note, t.created_at,
+      `SELECT t.id, t.kind, t.amount, t.note, t.created_at, t.category_id,
               EXISTS(
                 SELECT 1 FROM debt_transactions d WHERE d.linked_tx_id = t.id
               ) AS linked_to_debt
@@ -248,7 +262,84 @@ export async function getSummary(db, limit = 50) {
   };
 }
 
-export async function addTransaction(db, kind, amountCents, note = "", requestId = null) {
+function categoryData(row) {
+  return { id: row.id, name: row.name, is_archived: Boolean(row.is_archived), created_at: row.created_at };
+}
+
+export async function listCategories(db) {
+  await ensureSchema(db);
+  const { results } = await db.prepare("SELECT * FROM categories ORDER BY is_archived, name COLLATE NOCASE").all();
+  return (results || []).map(categoryData);
+}
+
+export async function createCategory(db, name) {
+  await ensureSchema(db);
+  const cleanName = typeof name === "string" ? name.trim() : "";
+  if (!cleanName || cleanName.length > 50) throw new Error("название категории должно содержать от 1 до 50 символов");
+  try {
+    const result = await db.prepare("INSERT INTO categories (name, created_at) VALUES (?, ?)").bind(cleanName, utcNow()).run();
+    const row = await db.prepare("SELECT * FROM categories WHERE id = ?").bind(result.meta.last_row_id).first();
+    return categoryData(row);
+  } catch (err) {
+    if (String(err.message).includes("UNIQUE")) throw new Error("такая категория уже существует");
+    throw err;
+  }
+}
+
+export async function updateCategory(db, id, name, archived) {
+  await ensureSchema(db);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("некорректный id категории");
+  if (name === undefined && archived === undefined) throw new Error("укажите изменения категории");
+  if (name !== undefined && (typeof name !== "string" || !name.trim() || name.trim().length > 50)) throw new Error("название категории должно содержать от 1 до 50 символов");
+  if (archived !== undefined && typeof archived !== "boolean") throw new Error("archived must be a boolean");
+  const existing = await db.prepare("SELECT * FROM categories WHERE id = ?").bind(id).first();
+  if (!existing) throw new Error("категория не найдена или архивирована");
+  try {
+    if (name !== undefined) await db.prepare("UPDATE categories SET name = ? WHERE id = ?").bind(name.trim(), id).run();
+    if (archived !== undefined) await db.prepare("UPDATE categories SET is_archived = ? WHERE id = ?").bind(archived ? 1 : 0, id).run();
+  } catch (err) {
+    if (String(err.message).includes("UNIQUE")) throw new Error("такая категория уже существует");
+    throw err;
+  }
+  return categoryData(await db.prepare("SELECT * FROM categories WHERE id = ?").bind(id).first());
+}
+
+async function requireActiveCategory(db, categoryId) {
+  const row = await db.prepare("SELECT * FROM categories WHERE id = ? AND is_archived = 0").bind(categoryId).first();
+  if (!row) throw new Error("категория не найдена или архивирована");
+}
+
+export async function setTransactionCategory(db, id, categoryId) {
+  await ensureSchema(db);
+  if (!Number.isInteger(id) || id <= 0 || (categoryId !== null && (!Number.isInteger(categoryId) || categoryId <= 0))) throw new Error("некорректный id категории или операции");
+  const tx = await db.prepare("SELECT kind FROM transactions WHERE id = ?").bind(id).first();
+  const linked = await db.prepare("SELECT 1 FROM debt_transactions WHERE linked_tx_id = ?").bind(id).first();
+  if (!tx) throw new Error("операция не найдена");
+  if (tx.kind !== KIND_EXPENSE || linked) throw new Error("категорию можно назначить только обычной трате");
+  if (categoryId !== null) await requireActiveCategory(db, categoryId);
+  await db.prepare("UPDATE transactions SET category_id = ? WHERE id = ?").bind(categoryId, id).run();
+}
+
+export async function getAnalytics(db, month) {
+  await ensureSchema(db);
+  if (!/^\d{4}-\d{2}$/.test(month || "")) throw new Error("month must use YYYY-MM");
+  const start = `${month}-01T00:00:00.000Z`;
+  const startDate = new Date(start);
+  if (Number.isNaN(startDate.getTime()) || startDate.getUTCMonth() + 1 !== Number(month.slice(5))) throw new Error("month must use YYYY-MM");
+  const end = startDate.getUTCMonth() === 11 ? `${Number(month.slice(0, 4)) + 1}-01-01T00:00:00.000Z` : `${month.slice(0, 5)}${String(Number(month.slice(5)) + 1).padStart(2, "0")}-01T00:00:00.000Z`;
+  const { results } = await db.prepare(`SELECT t.id, t.amount, t.note, t.created_at, t.category_id, c.name AS category_name, EXISTS(SELECT 1 FROM debt_transactions d WHERE d.linked_tx_id = t.id) AS linked_to_debt FROM transactions t LEFT JOIN categories c ON c.id = t.category_id WHERE t.kind = 'expense' AND t.created_at >= ? AND t.created_at < ? ORDER BY t.id DESC`).bind(start, end).all();
+  const grouped = new Map(); const transactions = [];
+  for (const row of results || []) {
+    const system = Boolean(row.linked_to_debt); const key = system ? "debt" : row.category_id === null ? "uncategorized" : `category:${row.category_id}`; const name = system ? "Возврат долга" : row.category_id === null ? "Без категории" : row.category_name;
+    const group = grouped.get(key) || { id: row.category_id, key, name, cents: 0, system }; group.cents += row.amount; grouped.set(key, group);
+    transactions.push({ id: row.id, amount: row.amount / 100, note: row.note, created_at: row.created_at, category_id: row.category_id, category_name: name, system_category: system });
+  }
+  const total = [...grouped.values()].reduce((sum, item) => sum + item.cents, 0);
+  const categories = [...grouped.values()].map((item) => ({ id: item.id, key: item.key, name: item.name, amount: item.cents / 100, share: total ? item.cents / total : 0, system: item.system })).sort((a, b) => b.amount - a.amount);
+  return { month, total: total / 100, categories, transactions };
+}
+
+export async function addTransaction(db, kind, amountCents, note = "", requestId = null, categoryId = null) {
   await ensureSchema(db);
   if (kind !== KIND_INCOME && kind !== KIND_EXPENSE) {
     throw new Error("kind must be 'income' or 'expense'");
@@ -261,6 +352,8 @@ export async function addTransaction(db, kind, amountCents, note = "", requestId
     typeof requestId === "string" && requestId.trim() ? requestId.trim().slice(0, 80) : null;
   const cleanNote = (note || "").trim();
   const createdAt = utcNow();
+  if (categoryId !== null && (kind !== KIND_EXPENSE || !Number.isInteger(categoryId) || categoryId <= 0)) throw new Error("категорию можно назначить только обычной трате");
+  if (categoryId !== null) await requireActiveCategory(db, categoryId);
 
   if (cleanRequestId) {
     const reserved = await db
@@ -282,11 +375,11 @@ export async function addTransaction(db, kind, amountCents, note = "", requestId
   if (kind === KIND_EXPENSE) {
     result = await db
       .prepare(
-        `INSERT INTO transactions (kind, amount, note, created_at)
-         SELECT 'expense', ?, ?, ?
+        `INSERT INTO transactions (kind, amount, note, created_at, category_id)
+         SELECT 'expense', ?, ?, ?, ?
          WHERE ? <= (SELECT ${BALANCE_CENTS_EXPR} FROM transactions)`
       )
-      .bind(amountCents, cleanNote, createdAt, amountCents)
+      .bind(amountCents, cleanNote, createdAt, categoryId, amountCents)
       .run();
 
     if (!result.meta?.changes) {
@@ -318,6 +411,7 @@ export async function addTransaction(db, kind, amountCents, note = "", requestId
       amount: amountCents / 100,
       note: cleanNote,
       created_at: createdAt,
+      category_id: categoryId,
     },
   };
 }

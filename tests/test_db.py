@@ -137,6 +137,38 @@ class DbTest(unittest.TestCase):
             conn.close()
         self.assertEqual(count, 0)
 
+    def test_category_analytics_and_manual_assignment(self):
+        db.add_transaction(db.KIND_INCOME, 10000)
+        food = db.create_category("Продукты")
+        first = db.add_transaction(db.KIND_EXPENSE, 2500, category_id=food["id"])
+        second = db.add_transaction(db.KIND_EXPENSE, 1000)
+
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+        report = db.get_analytics(month)
+        self.assertEqual(report["total"], 35.0)
+        self.assertEqual(report["categories"][0]["name"], "Продукты")
+
+        db.set_transaction_category(second["transaction"]["id"], food["id"])
+        report = db.get_analytics(month)
+        self.assertEqual(len(report["categories"]), 1)
+        self.assertEqual(report["categories"][0]["amount"], 35.0)
+        self.assertEqual(first["transaction"]["category_id"], food["id"])
+
+    def test_archived_category_cannot_be_assigned(self):
+        db.add_transaction(db.KIND_INCOME, 10000)
+        category = db.create_category("Дом")
+        db.update_category(category["id"], archived=True)
+        with self.assertRaises(ValueError):
+            db.add_transaction(db.KIND_EXPENSE, 1000, category_id=category["id"])
+
+    def test_debt_repayment_has_system_analytics_category(self):
+        db.add_transaction(db.KIND_INCOME, 10000)
+        debt = db.create_debt("Тест", 5000)
+        db.add_debt(debt["id"], db.DEBT_REPAY, 1000)
+        report = db.get_analytics(datetime.now(timezone.utc).strftime("%Y-%m"))
+        self.assertEqual(report["categories"][0]["name"], "Возврат долга")
+        self.assertTrue(report["categories"][0]["system"])
+
 
 if __name__ == "__main__":
     unittest.main()

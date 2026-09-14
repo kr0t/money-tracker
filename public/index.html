@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#1a2e24" />
     <title>Доступные деньги</title>
-    <link rel="stylesheet" href="/style.css?v=7" />
+    <link rel="stylesheet" href="/style.css?v=8" />
   </head>
   <body>
     <div class="auth-screen" id="auth-screen" hidden>
@@ -35,7 +35,7 @@
       <header class="hero">
         <div class="hero-top">
           <p class="brand">Доступно</p>
-          <button type="button" class="logout-btn" id="logout-btn" title="Выйти" aria-label="Выйти">Выйти</button>
+          <div class="hero-actions"><a class="analytics-link" href="/analytics.html">Аналитика</a><button type="button" class="logout-btn" id="logout-btn" title="Выйти" aria-label="Выйти">Выйти</button></div>
         </div>
         <p class="balance" id="balance" aria-live="polite">—</p>
         <p class="hint">после зарплат и трат</p>
@@ -162,6 +162,10 @@
                   placeholder="необязательно"
                 />
               </label>
+              <label class="field" id="category-field" hidden>
+                <span>Категория</span>
+                <select id="category" name="category"><option value="">Без категории</option></select>
+              </label>
               <p class="error" id="form-error" hidden></p>
               <button type="submit" class="submit" id="submit-btn">Сохранить</button>
             </form>
@@ -178,6 +182,6 @@
         </div>
       </section>
     </div>
-    <script src="/app.js?v=7"></script>
+    <script src="/app.js?v=8"></script>
   </body>
 </html>

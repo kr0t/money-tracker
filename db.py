@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -84,6 +85,17 @@ def init_db() -> None:
                 kind TEXT NOT NULL CHECK (kind IN ('income', 'expense')),
                 amount INTEGER NOT NULL CHECK (amount > 0),
                 note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                category_id INTEGER REFERENCES categories(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
                 created_at TEXT NOT NULL
             )
             """
@@ -124,6 +136,8 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE debt_transactions ADD COLUMN debt_id INTEGER REFERENCES debts(id)"
             )
+        if "category_id" not in _table_columns(conn, "transactions"):
+            conn.execute("ALTER TABLE transactions ADD COLUMN category_id INTEGER REFERENCES categories(id)")
 
         orphan_count = conn.execute(
             "SELECT COUNT(*) AS cnt FROM debt_transactions WHERE debt_id IS NULL"
@@ -177,6 +191,7 @@ def _serialize_tx(row: sqlite3.Row) -> dict:
         "note": row["note"],
         "created_at": row["created_at"],
         "linked_to_debt": bool(row["linked_to_debt"]),
+        "category_id": row["category_id"],
     }
 
 
@@ -219,7 +234,7 @@ def get_summary(limit: int = 50) -> dict:
         debt = _debt_cents(conn)
         rows = conn.execute(
             """
-            SELECT t.id, t.kind, t.amount, t.note, t.created_at,
+            SELECT t.id, t.kind, t.amount, t.note, t.created_at, t.category_id,
                    EXISTS(
                        SELECT 1 FROM debt_transactions d WHERE d.linked_tx_id = t.id
                    ) AS linked_to_debt
@@ -242,7 +257,57 @@ def get_summary(limit: int = 50) -> dict:
     }
 
 
-def add_transaction(kind: str, amount_cents: int, note: str = "", request_id: str | None = None) -> dict:
+def _category(conn: sqlite3.Connection, category_id: int, include_archived: bool = False) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
+    if row is None or (row["is_archived"] and not include_archived):
+        raise ValueError("категория не найдена или архивирована")
+    return row
+
+
+def _category_data(row: sqlite3.Row) -> dict:
+    return {"id": row["id"], "name": row["name"], "is_archived": bool(row["is_archived"]), "created_at": row["created_at"]}
+
+
+def list_categories() -> list[dict]:
+    with _connection() as conn:
+        rows = conn.execute("SELECT * FROM categories ORDER BY is_archived, name COLLATE NOCASE").fetchall()
+    return [_category_data(row) for row in rows]
+
+
+def create_category(name: str) -> dict:
+    clean_name = name.strip() if isinstance(name, str) else ""
+    if not clean_name or len(clean_name) > 50:
+        raise ValueError("название категории должно содержать от 1 до 50 символов")
+    with _connection() as conn:
+        try:
+            cur = conn.execute("INSERT INTO categories (name, created_at) VALUES (?, ?)", (clean_name, _utc_now()))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("такая категория уже существует") from exc
+        return _category_data(_category(conn, cur.lastrowid, True))
+
+
+def update_category(category_id: int, name=None, archived=None) -> dict:
+    if isinstance(category_id, bool) or not isinstance(category_id, int) or category_id <= 0:
+        raise ValueError("некорректный id категории")
+    if name is None and archived is None:
+        raise ValueError("укажите изменения категории")
+    if name is not None and (not isinstance(name, str) or not name.strip() or len(name.strip()) > 50):
+        raise ValueError("название категории должно содержать от 1 до 50 символов")
+    if archived is not None and not isinstance(archived, bool):
+        raise ValueError("archived must be a boolean")
+    with _connection() as conn:
+        _category(conn, category_id, True)
+        try:
+            if name is not None:
+                conn.execute("UPDATE categories SET name = ? WHERE id = ?", (name.strip(), category_id))
+            if archived is not None:
+                conn.execute("UPDATE categories SET is_archived = ? WHERE id = ?", (int(archived), category_id))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("такая категория уже существует") from exc
+        return _category_data(_category(conn, category_id, True))
+
+
+def add_transaction(kind: str, amount_cents: int, note: str = "", request_id: str | None = None, category_id=None) -> dict:
     if kind not in (KIND_INCOME, KIND_EXPENSE):
         raise ValueError("kind must be 'income' or 'expense'")
     if amount_cents <= 0:
@@ -255,9 +320,13 @@ def add_transaction(kind: str, amount_cents: int, note: str = "", request_id: st
         else None
     )
     created_at = _utc_now()
+    if category_id is not None and (kind != KIND_EXPENSE or isinstance(category_id, bool) or not isinstance(category_id, int) or category_id <= 0):
+        raise ValueError("категорию можно назначить только обычной трате")
 
     with _connection() as conn:
         with _transaction(conn):
+            if category_id is not None:
+                _category(conn, category_id)
             if clean_request_id:
                 cur = conn.execute(
                     "INSERT OR IGNORE INTO processed_requests (request_id, created_at) VALUES (?, ?)",
@@ -271,11 +340,11 @@ def add_transaction(kind: str, amount_cents: int, note: str = "", request_id: st
             if kind == KIND_EXPENSE:
                 cur = conn.execute(
                     f"""
-                    INSERT INTO transactions (kind, amount, note, created_at)
-                    SELECT 'expense', ?, ?, ?
+                    INSERT INTO transactions (kind, amount, note, created_at, category_id)
+                    SELECT 'expense', ?, ?, ?, ?
                     WHERE ? <= (SELECT {BALANCE_CENTS_EXPR} FROM transactions)
                     """,
-                    (amount_cents, note, created_at, amount_cents),
+                    (amount_cents, note, created_at, category_id, amount_cents),
                 )
                 if cur.rowcount != 1:
                     raise ValueError("сумма больше доступного баланса")
@@ -298,8 +367,62 @@ def add_transaction(kind: str, amount_cents: int, note: str = "", request_id: st
             "amount": amount_cents / 100,
             "note": note,
             "created_at": created_at,
+            "category_id": category_id,
         },
     }
+
+
+def set_transaction_category(tx_id: int, category_id) -> None:
+    if isinstance(tx_id, bool) or not isinstance(tx_id, int) or tx_id <= 0:
+        raise ValueError("некорректный id операции")
+    if category_id is not None and (isinstance(category_id, bool) or not isinstance(category_id, int) or category_id <= 0):
+        raise ValueError("некорректный id категории")
+    with _connection() as conn:
+        with _transaction(conn):
+            tx = conn.execute("SELECT kind FROM transactions WHERE id = ?", (tx_id,)).fetchone()
+            linked = conn.execute("SELECT 1 FROM debt_transactions WHERE linked_tx_id = ?", (tx_id,)).fetchone()
+            if tx is None:
+                raise ValueError("операция не найдена")
+            if tx["kind"] != KIND_EXPENSE or linked:
+                raise ValueError("категорию можно назначить только обычной трате")
+            if category_id is not None:
+                _category(conn, category_id)
+            conn.execute("UPDATE transactions SET category_id = ? WHERE id = ?", (category_id, tx_id))
+
+
+def get_analytics(month: str) -> dict:
+    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise ValueError("month must use YYYY-MM")
+    try:
+        start = datetime.strptime(month, "%Y-%m").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise ValueError("month must use YYYY-MM") from exc
+    end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    with _connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id, t.amount, t.note, t.created_at, t.category_id, c.name AS category_name,
+                   EXISTS(SELECT 1 FROM debt_transactions d WHERE d.linked_tx_id = t.id) AS linked_to_debt
+            FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+            WHERE t.kind = 'expense' AND t.created_at >= ? AND t.created_at < ? ORDER BY t.id DESC
+            """, (start.isoformat(), end.isoformat())
+        ).fetchall()
+    grouped = {}
+    transactions = []
+    for row in rows:
+        if row["linked_to_debt"]:
+            key, name, system = "debt", "Возврат долга", True
+        elif row["category_id"] is None:
+            key, name, system = "uncategorized", "Без категории", False
+        else:
+            key, name, system = f"category:{row['category_id']}", row["category_name"], False
+        grouped[key] = grouped.get(key, {"id": row["category_id"], "key": key, "name": name, "cents": 0, "system": system})
+        grouped[key]["cents"] += row["amount"]
+        transactions.append({"id": row["id"], "amount": row["amount"] / 100, "note": row["note"], "created_at": row["created_at"], "category_id": row["category_id"], "category_name": name, "system_category": system})
+    total = sum(item["cents"] for item in grouped.values())
+    categories = [{"id": item["id"], "key": item["key"], "name": item["name"], "amount": item["cents"] / 100, "share": item["cents"] / total if total else 0, "system": item["system"]} for item in grouped.values()]
+    categories.sort(key=lambda item: item["amount"], reverse=True)
+    return {"month": month, "total": total / 100, "categories": categories, "transactions": transactions}
 
 
 def delete_transaction(tx_id) -> dict:

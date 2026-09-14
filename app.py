@@ -14,7 +14,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import db
 
@@ -287,6 +287,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/summary":
                 self._send_json(200, db.get_summary())
                 return
+            if path == "/api/categories":
+                self._send_json(200, {"categories": db.list_categories()})
+                return
+            if path == "/api/analytics":
+                month = parse_qs(urlparse(self.path).query).get("month", [""])[0]
+                self._send_json(200, db.get_analytics(month))
+                return
 
             self._send_json(404, {"error": "not found"})
             return
@@ -295,7 +302,7 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_file(STATIC_DIR / "index.html")
             return
 
-        if path in ("/style.css", "/app.js"):
+        if path in ("/analytics.html", "/analytics.js", "/style.css", "/app.js"):
             self._serve_file(STATIC_DIR / path.lstrip("/"))
             return
 
@@ -329,6 +336,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/expense":
                 self._handle_add(db.KIND_EXPENSE)
+                return
+            if path == "/api/categories":
+                self._handle_create_category()
+                return
+            if path == "/api/categories/update":
+                self._handle_update_category()
+                return
+            if path == "/api/transactions/category":
+                self._handle_transaction_category()
                 return
             if path == "/api/debt/borrow":
                 self._handle_debt(db.DEBT_BORROW)
@@ -426,7 +442,8 @@ class Handler(BaseHTTPRequestHandler):
             request_id = data.get("request_id")
             if not isinstance(request_id, str):
                 request_id = None
-            result = db.add_transaction(kind, amount_cents, note, request_id)
+            category_id = data.get("category_id")
+            result = db.add_transaction(kind, amount_cents, note, request_id, category_id)
             summary = db.get_summary()
             status = 200 if result["duplicate"] else 201
             self._send_json(
@@ -437,6 +454,28 @@ class Handler(BaseHTTPRequestHandler):
                     "duplicate": result["duplicate"],
                 },
             )
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_create_category(self) -> None:
+        try:
+            data = self._read_json()
+            self._send_json(201, {"category": db.create_category(data.get("name"))})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_update_category(self) -> None:
+        try:
+            data = self._read_json()
+            self._send_json(200, {"category": db.update_category(data.get("id"), data.get("name"), data.get("archived"))})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_transaction_category(self) -> None:
+        try:
+            data = self._read_json()
+            db.set_transaction_category(data.get("id"), data.get("category_id"))
+            self._send_json(200, {"ok": True})
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
 

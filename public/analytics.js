@@ -1,0 +1,24 @@
+(() => {
+  const money = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", minimumFractionDigits: 2 });
+  let month = new Date().toISOString().slice(0, 7); let categories = [];
+  const title = document.getElementById("period-title"); const total = document.getElementById("analytics-total"); const chart = document.getElementById("chart");
+  const request = async (url, options = {}) => { const res = await fetch(url, { ...options, credentials: "same-origin" }); if (res.status === 401) { location.href = "/"; throw new Error("Требуется авторизация"); } const data = await res.json(); if (!res.ok) throw new Error(data.error || "Ошибка запроса"); return data; };
+  const monthLabel = (value) => new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(new Date(`${value}-01T12:00:00`));
+  const options = (selected) => `<option value="">Без категории</option>${categories.filter((c) => !c.is_archived).map((c) => `<option value="${c.id}" ${c.id === selected ? "selected" : ""}>${c.name}</option>`).join("")}`;
+  async function load() {
+    const [categoryData, analytics] = await Promise.all([request("/api/categories"), request(`/api/analytics?month=${month}`)]); categories = categoryData.categories; title.textContent = monthLabel(month); total.textContent = money.format(analytics.total);
+    const colors = ["#1f6b45", "#a33b2b", "#c4832f", "#477fa0", "#805f93", "#6f8063", "#b15e79"]; let position = 0;
+    chart.style.background = analytics.categories.length ? `conic-gradient(${analytics.categories.map((item, index) => { const start = position; position += item.share * 360; return `${colors[index % colors.length]} ${start}deg ${position}deg`; }).join(",")})` : "#d8d4cc";
+    document.getElementById("analytics-empty").hidden = analytics.categories.length > 0;
+    document.getElementById("category-list").innerHTML = analytics.categories.map((item, index) => `<li><span><b style="color:${colors[index % colors.length]}">●</b> ${item.name}<br><small>${Math.round(item.share * 100)}%</small></span><strong>${money.format(item.amount)}</strong></li>`).join("");
+    document.getElementById("category-manager-list").innerHTML = categories.map((item) => `<li><span>${item.name}${item.is_archived ? " <small>Архив</small>" : ""}</span><button class="icon-btn" data-archive="${item.id}" type="button" title="${item.is_archived ? "Вернуть" : "Архивировать"}">${item.is_archived ? "↶" : "⌫"}</button></li>`).join("");
+    document.getElementById("transaction-list").innerHTML = analytics.transactions.map((item) => `<li><span>${item.note || "Трата"}<br><small>${new Date(item.created_at).toLocaleDateString("ru-RU")}</small></span><span><strong>${money.format(item.amount)}</strong>${item.system_category ? `<small>Возврат долга</small>` : `<select class="transaction-category" data-id="${item.id}">${options(item.category_id)}</select>`}</span></li>`).join("");
+  }
+  document.getElementById("prev-month").onclick = () => { const date = new Date(`${month}-01T12:00:00`); date.setMonth(date.getMonth() - 1); month = date.toISOString().slice(0, 7); load().catch(alert); };
+  document.getElementById("next-month").onclick = () => { const date = new Date(`${month}-01T12:00:00`); date.setMonth(date.getMonth() + 1); if (date <= new Date(new Date().getFullYear(), new Date().getMonth(), 1)) { month = date.toISOString().slice(0, 7); load().catch(alert); } };
+  document.getElementById("category-form").onsubmit = async (event) => { event.preventDefault(); try { await request("/api/categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: document.getElementById("category-name").value }) }); event.target.reset(); await load(); } catch (err) { alert(err.message); } };
+  document.addEventListener("change", async (event) => { if (!event.target.matches(".transaction-category")) return; try { await request("/api/transactions/category", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: Number(event.target.dataset.id), category_id: event.target.value ? Number(event.target.value) : null }) }); await load(); } catch (err) { alert(err.message); } });
+  document.addEventListener("click", async (event) => { const button = event.target.closest("[data-archive]"); if (!button) return; const category = categories.find((item) => item.id === Number(button.dataset.archive)); try { await request("/api/categories/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: category.id, archived: !category.is_archived }) }); await load(); } catch (err) { alert(err.message); } });
+  document.getElementById("logout-btn").onclick = async () => { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); location.href = "/"; };
+  load().catch((err) => alert(err.message));
+})();
